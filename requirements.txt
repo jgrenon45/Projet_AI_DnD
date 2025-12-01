@@ -1,0 +1,3 @@
+pydantic-ai>=1.25.1
+langchain-chroma>=1.0.0
+langchain-ollama>=1.0.0
