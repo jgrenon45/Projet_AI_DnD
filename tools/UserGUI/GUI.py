@@ -87,7 +87,27 @@ promptFrame = Frame(mainFrame)
 
 promptText = Text(promptFrame, width=50, height=1)
 promptText.pack(side="left", fill="x", expand=True)
+promptText.bind("<Return>", lambda event: (sendPrompt(), "break"))
 
+def resize_text(event=None):
+    # Count the number of lines in the Text widget
+    num_lines = int(promptText.index("end-1c").split('.')[0])
+    min_lines = 1
+    max_lines = 10
+    # Set the height within limits
+    promptText.config(height=min(max(num_lines, min_lines), max_lines))
+
+
+# Shift+Enter → insert newline and resize
+def shift_enter(event):
+    promptText.insert("insert", "\n")
+    promptText.after(1, resize_text)
+    return "break"
+
+promptText.bind("<Shift-Return>", shift_enter)
+
+# Resize dynamically while typing or deleting
+promptText.bind("<KeyRelease>", resize_text)
 
 def get_response(user_input, environment, quest_type):
     response = get_model_response(user_input, environment, quest_type)
@@ -112,6 +132,7 @@ def sendPrompt():
     # Auto-scroll to bottom
     canvas.update_idletasks()
     canvas.yview_moveto(1.0)  # scroll to bottom
+    resize_text()
 
 
 sendPromptButton = Button(promptFrame, text="Enter", bg="blue", fg="white", command=sendPrompt)
