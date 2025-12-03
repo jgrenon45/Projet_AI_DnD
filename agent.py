@@ -18,3 +18,6 @@ knowledge_agent = Agent(
     "You help players by providing detailed information about quests, player stats, and game mechanics." \
     "Use the data provided to generate a comprehensive overview of the current game state."
     )
+
+def get_model_response(user_input, environment, quest_type):
+    return "t laid"
