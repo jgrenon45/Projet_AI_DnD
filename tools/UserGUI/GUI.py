@@ -64,8 +64,10 @@ canvas.pack(side="left", fill="both", expand=True)
 messagesFrame = Frame(canvas)
 canvas.create_window((0, 0), window=messagesFrame, anchor="nw")
 
+
 def update_scroll_region(event=None):
     canvas.configure(scrollregion=canvas.bbox("all"))
+
 
 messagesFrame.bind("<Configure>", update_scroll_region)
 # -----------------------------------
@@ -74,9 +76,11 @@ messagesFrame.bind("<Configure>", update_scroll_region)
 # Initial system text
 Label(
     messagesFrame,
-    text="Hi! I am a DnD tool to help you build a quest for your next session as a Dungeon Master. What type of quest do you want me to create for you?"
+    text="Hi! I am a DnD tool to help you build a quest for your next session as a Dungeon Master. What type of quest do you want me to create for you?",
+    anchor="w",
+    justify="left",
+    wraplength=400
 ).pack(anchor="w")
-
 
 # Prompt system
 promptFrame = Frame(mainFrame)
@@ -95,20 +99,19 @@ def sendPrompt():
     promptText.delete(1.0, "end")
 
     # User message
-    userPrompt = Label(messagesFrame, text=userPromptText, anchor="e", justify="right", fg="blue")
+    userPrompt = Label(messagesFrame, text=userPromptText, anchor="e", fg="blue", justify="right", wraplength=400)
     userPrompt.pack(anchor="e")
 
     # LLM response
     environment = envVar.get()
     quest_type = questVar.get()
     LLMResultText = get_response(userPromptText, environment, quest_type)
-
-    LLMResult = Label(messagesFrame, text=LLMResultText, anchor="w", justify="left")
+    LLMResult = Label(messagesFrame, text=LLMResultText, anchor="w", justify="left", wraplength=400)
     LLMResult.pack(anchor="w")
 
     # Auto-scroll to bottom
     canvas.update_idletasks()
-    canvas.yview_moveto(1.0)   # scroll to bottom
+    canvas.yview_moveto(1.0)  # scroll to bottom
 
 
 sendPromptButton = Button(promptFrame, text="Enter", bg="blue", fg="white", command=sendPrompt)
