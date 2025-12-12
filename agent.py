@@ -15,7 +15,7 @@ from tools.db import MonsterDatabase, CampaignDatabase
 class DnDAgent:
     """Main agent that coordinates all systems"""
     
-    def __init__(self, use_ollama: bool = True, model_name: str = "llama2"):
+    def __init__(self, use_ollama: bool = True, model_name: str = "qwen/qwen3-vl-8b"):
         """
         Initialize the D&D Agent
         
