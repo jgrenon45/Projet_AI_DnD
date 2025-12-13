@@ -5,7 +5,7 @@ Supports both Ollama and LM Studio
 
 import requests
 import json
-import re
+from requests.exceptions import ReadTimeout, ConnectionError, RequestException
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
 
@@ -18,7 +18,7 @@ class ModelConfig:
     """
     model_name: str = "llama2"  # Nom du modèle (ex: llama2, mistral)
     temperature: float = 0.7    # Contrôle la créativité / variance des réponses
-    max_tokens: int = 2048      # Nombre maximum de tokens générés
+    max_tokens: int = 8096      # Nombre maximum de tokens générés
     top_p: float = 0.9          # Paramètre nucleus sampling
     top_k: int = 40             # Paramètre top-k sampling
 
@@ -128,6 +128,13 @@ class OllamaModel:
             else:
                 return f"Erreur: {response.status_code}"
                 
+        except ReadTimeout:
+            return ("Timeout: Ollama n'a pas repondu dans les delais. "
+                    "Verifiez que le service Ollama est lance et accessible.")
+        except ConnectionError:
+            return "Connexion refusee: Impossible de joindre Ollama sur le port configure."
+        except RequestException as e:
+            return f"Erreur reseau vers Ollama: {str(e)}"
         except Exception as e:
             return f"Erreur lors de la génération: {str(e)}"
     
@@ -164,6 +171,21 @@ class OllamaModel:
             else:
                 return f"Erreur: {response.status_code}"
                 
+        except ReadTimeout:
+            return ("Timeout: Ollama n'a pas repondu dans les delais. "
+                    "Verifiez que le service Ollama est lance et accessible.")
+        except ConnectionError:
+            return "Connexion refusee: Impossible de joindre Ollama sur le port configure."
+        except RequestException as e:
+            return f"Erreur reseau vers Ollama: {str(e)}"
+        except ReadTimeout:
+            return ("Timeout: LM Studio n'a pas repondu dans les delais (port 1234). "
+                    "Verifiez que LM Studio est lance et qu'un modele est charge.")
+        except ConnectionError:
+            return ("Connexion refusee: Impossible de joindre LM Studio sur "
+                    "http://localhost:1234. Assurez-vous que le service est demarre.")
+        except RequestException as e:
+            return f"Erreur reseau vers LM Studio: {str(e)}"
         except Exception as e:
             return f"Erreur: {str(e)}"
 
@@ -227,8 +249,7 @@ class LMStudioModel:
             
             response = requests.post(
                 f"{self.base_url}/chat/completions",
-                json=payload,
-                timeout=60
+                json=payload
             )
             
             if response.status_code == 200:
@@ -259,10 +280,7 @@ class DnDAssistantModel:
         self.lmstudio = LMStudioModel(self.config)
         
         # Sélection du backend disponible
-        if use_ollama and self.ollama.is_available:
-            self.active_model = self.ollama
-            self.backend = "Ollama"
-        elif self.lmstudio.is_available:
+        if self.lmstudio.is_available:
             self.active_model = self.lmstudio
             self.backend = "LM Studio"
         else:
@@ -446,7 +464,7 @@ Si tu cites les règles, mentionne la source (Player's Handbook, Basic Rules, et
         Returns:
             Encounter: Parsed Encounter object
         """    
-        
+
         response = self.generate_dm_response(prompt)
         return self._parse_encounter_response(response, party_level, difficulty)
 

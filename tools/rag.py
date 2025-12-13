@@ -21,7 +21,7 @@ except ImportError:
     from PyPDF2 import PdfReader  # Compatibilité avec PyPDF2
 
 # Vector store
-from chromadb import Client, Settings
+from chromadb import Client
 from chromadb.config import Settings as ChromaSettings
 import chromadb
 
