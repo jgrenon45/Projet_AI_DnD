@@ -915,7 +915,7 @@ class DnDAssistantGUI:
                 prompt += f"Alignement: {mor}. "
                 prompt += "Inclus: description, creatures/PNJ impliques, tactiques, recompenses potentielles et consequences."
                 
-                self.quick_action(prompt)
+                result = self.model.generate_encounter(prompt, level, diff)
                 dialog.destroy()
         
         level_entry.bind("<Return>", lambda e: submit())
@@ -1004,7 +1004,7 @@ class DnDAssistantGUI:
                 prompt += " et donne-lui une quete interessante a proposer aux joueurs"
             prompt += ". Inclus: nom, race, classe, personnalite, background et motivation."
             
-            self.quick_action(prompt)
+            result = self.model.generate_npc(prompt)
             dialog.destroy()
         
         btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
