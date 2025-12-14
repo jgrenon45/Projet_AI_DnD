@@ -1,0 +1,527 @@
+# REFERENCE COMPLETE D&D 5e
+# Document de reference pour le systeme RAG
+# Contient les regles essentielles et informations cles
+
+================================================================================
+CHAPITRE 1: REGLES DE COMBAT
+================================================================================
+
+## L'ORDRE D'INITIATIVE
+
+Au debut d'un combat, chaque participant fait un jet d'initiative pour determiner l'ordre des tours.
+
+Initiative = 1d20 + modificateur de Dexterite
+
+L'ordre d'initiative reste le meme pendant tout le combat sauf si une capacite le modifie.
+
+## ACTIONS EN COMBAT
+
+Pendant votre tour, vous pouvez:
+- Vous deplacer (jusqu'a votre vitesse)
+- Effectuer une action
+- Effectuer une action bonus (si disponible)
+- Effectuer une reaction (une fois par round)
+- Interagir avec un objet (gratuit, une fois par tour)
+
+### Actions standards:
+
+ATTAQUER: Effectuer une attaque au corps a corps ou a distance.
+Jet d'attaque = 1d20 + modificateur de caracteristique + bonus de maitrise (si competent)
+
+LANCER UN SORT: Utiliser un sort avec temps d'incantation de 1 action.
+
+ESQUIVER (Dodge): Jusqu'au debut de votre prochain tour, tout jet d'attaque contre vous a le desavantage si vous pouvez voir l'attaquant, et vous avez l'avantage sur les jets de sauvegarde de Dexterite.
+
+SE DESENGAGER (Disengage): Votre deplacement ne provoque pas d'attaque d'opportunite pour le reste du tour.
+
+AIDER (Help): Donner l'avantage a un allie sur son prochain jet d'attaque ou de caracteristique.
+
+SE CACHER (Hide): Faire un jet de Discretion (Stealth) pour se cacher.
+
+FONCER (Dash): Gagner un deplacement supplementaire egal a votre vitesse.
+
+PREPARER UNE ACTION (Ready): Preparer une action declenchee par un evenement specifique.
+
+CHERCHER (Search): Faire un jet de Perception ou Investigation.
+
+UTILISER UN OBJET (Use an Object): Utiliser un objet qui necessite une action.
+
+## ATTAQUE D'OPPORTUNITE
+
+Quand une creature que vous pouvez voir quitte votre portee, vous pouvez utiliser votre reaction pour faire une attaque de melee contre elle.
+
+Les attaques d'opportunite ne se declenchent PAS si:
+- La creature utilise l'action Se Desengager
+- La creature est forcee de se deplacer (poussee, tiree)
+- La creature se teleporte
+
+## COUVERTURE
+
+Demi-couverture (+2 CA et sauvegardes Dex): Obstacle couvrant au moins la moitie du corps
+Trois-quarts couverture (+5 CA et sauvegardes Dex): Obstacle couvrant au moins 3/4 du corps
+Couverture totale: Impossible a cibler directement
+
+## CONDITIONS
+
+AVEUGLE (Blinded): Desavantage aux attaques, avantage contre vous, echoue auto aux jets basés sur la vue.
+
+CHARME (Charmed): Ne peut pas attaquer le charmeur, celui-ci a l'avantage en interaction sociale.
+
+ASSOURDI (Deafened): Echoue automatiquement aux jets basés sur l'ouie.
+
+EFFRAYE (Frightened): Desavantage aux jets tant que la source de peur est visible, ne peut pas s'en approcher volontairement.
+
+EMPOIGNE (Grappled): Vitesse reduite a 0, termine si empoigneur incapacite ou effet separant.
+
+INCAPACITE (Incapacitated): Ne peut pas prendre d'actions ou reactions.
+
+INVISIBLE: Impossible a voir sans magie, considere comme lourdement obscurci, avantage aux attaques, desavantage contre vous.
+
+PARALYSE (Paralyzed): Incapacite, echec auto aux sauvegardes FOR et DEX, attaques ont l'avantage, coups critiques automatiques en melee.
+
+PETRIFIE (Petrified): Transforme en pierre, poids x10, inconscient, resistant a tous degats, immunise aux poisons et maladies.
+
+EMPOISONNE (Poisoned): Desavantage aux attaques et jets de caracteristique.
+
+A TERRE (Prone): Desavantage aux attaques, avantage contre vous en melee, desavantage contre vous a distance, se relever coute la moitie du mouvement.
+
+ENTRAVE (Restrained): Vitesse 0, avantage contre vous, vous avez desavantage aux attaques et sauvegardes DEX.
+
+ETOURDI (Stunned): Incapacite, echec auto sauvegardes FOR et DEX, attaques ont l'avantage.
+
+INCONSCIENT (Unconscious): Incapacite, a terre, echec auto sauvegardes FOR et DEX, attaques ont l'avantage, coups critiques auto en melee.
+
+EXHAUSTION (EPUISEMENT):
+Niveau 1: Desavantage aux jets de caracteristique
+Niveau 2: Vitesse reduite de moitie
+Niveau 3: Desavantage aux attaques et sauvegardes
+Niveau 4: Maximum de PV reduit de moitie
+Niveau 5: Vitesse reduite a 0
+Niveau 6: Mort
+
+## MORT ET STABILISATION
+
+A 0 PV, vous etes inconscient et faites des jets de sauvegarde contre la mort.
+
+Jet de sauvegarde contre la mort = 1d20
+- 10 ou plus = succes
+- 9 ou moins = echec
+- 1 naturel = 2 echecs
+- 20 naturel = regain 1 PV et reveil
+
+3 echecs = mort
+3 succes = stabilise (inconscient mais stable)
+
+Degats a 0 PV = 1 echec automatique (2 si critique)
+Degats massifs = mort instantanee si degats restants >= max PV
+
+Stabilisation: Jet de Medecine DD 10 ou kit de soins
+
+## CONCENTRATION
+
+Certains sorts necessitent la concentration. Vous ne pouvez maintenir qu'un seul sort de concentration a la fois.
+
+La concentration peut etre brisee par:
+- Lancer un autre sort de concentration
+- Subir des degats: Sauvegarde CON DD 10 ou moitie des degats (le plus eleve)
+- Etre incapacite ou tuer
+- Effet environnemental (a la discretion du MJ)
+
+================================================================================
+CHAPITRE 2: MAGIE ET SORTS
+================================================================================
+
+## EMPLACEMENTS DE SORTS
+
+Les lanceurs de sorts utilisent des emplacements pour lancer leurs sorts. Les emplacements se regenerent apres un repos long (court pour les sorciers).
+
+Niveau de sort minimum pour lancer = niveau de l'emplacement utilise
+
+## COMPOSANTES
+
+V (Verbale): Doit pouvoir parler
+S (Somatique): Doit avoir une main libre
+M (Materielle): Necessite le composant ou un focaliseur
+
+## TEMPS D'INCANTATION
+
+Action: 1 action standard
+Action bonus: Peut lancer un autre sort d'action si c'est un cantrip
+Reaction: En reponse a un declencheur
+1 minute: 10 rounds de concentration
+10 minutes ou plus: Hors combat generalement
+
+## RITUELS
+
+Certains sorts peuvent etre lances comme rituels sans depenser d'emplacement. Ajoute 10 minutes au temps d'incantation.
+
+## DD DE SAUVEGARDE
+
+DD = 8 + bonus de maitrise + modificateur de caracteristique de lancement
+
+## JETS D'ATTAQUE MAGIQUE
+
+Attaque = 1d20 + bonus de maitrise + modificateur de caracteristique de lancement
+
+## ECOLES DE MAGIE
+
+ABJURATION: Protection, bannissement, dissipation
+CONJURATION: Invocation de creatures et objets, teleportation
+DIVINATION: Connaissance, prevision, detection
+ENCHANTEMENT: Influence sur l'esprit, charme, controle
+EVOCATION: Energie brute, degats elementaires
+ILLUSION: Tromperie des sens, images
+NECROMANCIE: Mort, non-morts, drain de vie
+TRANSMUTATION: Transformation de matiere et forme
+
+================================================================================
+CHAPITRE 3: REPOS ET RECUPERATION
+================================================================================
+
+## REPOS COURT (Short Rest)
+
+Duree: Au moins 1 heure
+Activites: Manger, boire, se soigner, lire
+Recuperation: Peut depenser des Des de Vie pour recuperer des PV
+
+Des de Vie recuperes = De de Vie + modificateur de Constitution
+Maximum de Des de Vie = niveau du personnage
+
+## REPOS LONG (Long Rest)
+
+Duree: Au moins 8 heures (6h de sommeil + 2h d'activite legere max)
+Interruption: Combat ou 1h d'activite intense annule le repos
+Frequence: 1 seul repos long par 24 heures
+Necessite: Au moins 1 PV pour beneficier
+
+Recuperation apres repos long:
+- Tous les PV
+- La moitie des Des de Vie depenses (minimum 1)
+- Tous les emplacements de sorts
+- Toutes les capacites journalieres
+- 1 niveau d'epuisement
+
+================================================================================
+CHAPITRE 4: CARACTERISTIQUES
+================================================================================
+
+## LES SIX CARACTERISTIQUES
+
+FORCE (Strength/STR):
+- Attaques de melee
+- Jets de sauvegarde contre etre pousse/empoigne
+- Competences: Athletisme
+
+DEXTERITE (Dexterity/DEX):
+- Initiative
+- Classe d'armure (CA)
+- Attaques a distance et finesse
+- Jets de sauvegarde reflexes
+- Competences: Acrobaties, Discretion, Escamotage
+
+CONSTITUTION (Constitution/CON):
+- Points de vie
+- Jets de sauvegarde contre poison, maladie, concentration
+- Pas de competences directes
+
+INTELLIGENCE (Intelligence/INT):
+- Sorts de magicien
+- Jets de sauvegarde contre illusions
+- Competences: Arcanes, Histoire, Investigation, Nature, Religion
+
+SAGESSE (Wisdom/WIS):
+- Sorts de clerc, druide, ranger
+- Jets de sauvegarde contre charme, peur
+- Competences: Dressage, Intuition, Medecine, Perception, Survie
+
+CHARISME (Charisma/CHA):
+- Sorts de barde, paladin, sorcier, sorcier
+- Jets de sauvegarde contre bannissement
+- Competences: Intimidation, Persuasion, Representation, Tromperie
+
+## MODIFICATEURS
+
+Score / Modificateur:
+1 / -5
+2-3 / -4
+4-5 / -3
+6-7 / -2
+8-9 / -1
+10-11 / +0
+12-13 / +1
+14-15 / +2
+16-17 / +3
+18-19 / +4
+20-21 / +5
+22-23 / +6
+24-25 / +7
+26-27 / +8
+28-29 / +9
+30 / +10
+
+================================================================================
+CHAPITRE 5: AVANTAGE ET DESAVANTAGE
+================================================================================
+
+AVANTAGE: Lancer 2d20, garder le plus eleve
+DESAVANTAGE: Lancer 2d20, garder le plus bas
+
+Regles importantes:
+- Avantage + Desavantage = jet normal (peu importe le nombre de chaque)
+- Sources multiples d'avantage ne s'additionnent pas
+- Sources multiples de desavantage ne s'additionnent pas
+
+================================================================================
+CHAPITRE 6: NIVEAUX DE DIFFICULTE
+================================================================================
+
+## DD DES JETS DE CAPACITE
+
+Tres facile: DD 5
+Facile: DD 10
+Moyen: DD 15
+Difficile: DD 20
+Tres difficile: DD 25
+Presque impossible: DD 30
+
+## DIFFICULTE DES RENCONTRES (CR)
+
+CR = Challenge Rating (Indice de Danger)
+
+Seuils d'XP par personnage par niveau:
+Niv 1: Facile 25, Moyen 50, Difficile 75, Mortel 100
+Niv 5: Facile 250, Moyen 500, Difficile 750, Mortel 1100
+Niv 10: Facile 600, Moyen 1200, Difficile 1900, Mortel 2800
+Niv 15: Facile 1100, Moyen 2200, Difficile 3400, Mortel 5100
+Niv 20: Facile 2800, Moyen 5700, Difficile 8500, Mortel 12700
+
+Multiplicateurs de groupe (nombre de monstres):
+1 monstre: x1
+2 monstres: x1.5
+3-6 monstres: x2
+7-10 monstres: x2.5
+11-14 monstres: x3
+15+ monstres: x4
+
+================================================================================
+CHAPITRE 7: CLASSE D'ARMURE
+================================================================================
+
+CA de base = 10 + modificateur DEX
+
+## TYPES D'ARMURE
+
+ARMURE LEGERE (Light):
+- Rembourree (Padded): CA 11 + DEX, desavantage Discretion
+- Cuir (Leather): CA 11 + DEX
+- Cuir cloute (Studded Leather): CA 12 + DEX
+
+ARMURE INTERMEDIAIRE (Medium):
+- Peaux (Hide): CA 12 + DEX (max +2)
+- Chemise de mailles (Chain Shirt): CA 13 + DEX (max +2)
+- Ecailles (Scale Mail): CA 14 + DEX (max +2), desavantage Discretion
+- Cuirasse (Breastplate): CA 14 + DEX (max +2)
+- Demi-plate (Half Plate): CA 15 + DEX (max +2), desavantage Discretion
+
+ARMURE LOURDE (Heavy): Ignore DEX
+- Broigne (Ring Mail): CA 14, desavantage Discretion
+- Cotte de mailles (Chain Mail): CA 16, FOR 13 requise, desavantage Discretion
+- Eclisse (Splint): CA 17, FOR 15 requise, desavantage Discretion
+- Harnois (Plate): CA 18, FOR 15 requise, desavantage Discretion
+
+BOUCLIER (Shield): +2 CA
+
+================================================================================
+CHAPITRE 8: TYPES DE DEGATS
+================================================================================
+
+PHYSIQUES:
+- Contondant (Bludgeoning): Masses, marteaux, chutes
+- Perforant (Piercing): Fleches, lances, morsures
+- Tranchant (Slashing): Epees, haches, griffes
+
+ELEMENTAIRES:
+- Acide (Acid): Corrosion
+- Feu (Fire): Flammes, chaleur
+- Froid (Cold): Glace, gel
+- Foudre (Lightning): Electricite
+- Tonnerre (Thunder): Onde de choc sonore
+
+MAGIQUES:
+- Force (Force): Energie magique pure
+- Necrotique (Necrotic): Energie de mort
+- Poison (Poison): Toxines
+- Psychique (Psychic): Degats mentaux
+- Radiant (Radiant): Lumiere divine
+
+================================================================================
+CHAPITRE 9: REGLES DE DEPLACEMENT
+================================================================================
+
+## TERRAIN DIFFICILE
+
+Chaque case de terrain difficile coute 2 cases de mouvement.
+Exemples: Gravats, buissons, escaliers, neige, marecages
+
+## DEPLACEMENT SPECIAL
+
+Escalade: Coute 2 cases par case (1 avec vitesse d'escalade)
+Nage: Coute 2 cases par case (1 avec vitesse de nage)
+Ramper: Coute 2 cases par case
+Se relever: Coute la moitie de votre mouvement
+
+## SAUTS
+
+Saut en longueur (avec elan): Distance = score de Force (en pieds)
+Saut en longueur (sans elan): Distance = score de Force / 2
+Saut en hauteur (avec elan): Hauteur = 3 + modificateur FOR (pieds)
+Saut en hauteur (sans elan): Hauteur = (3 + modificateur FOR) / 2
+
+================================================================================
+CHAPITRE 10: VISION ET LUMIERE
+================================================================================
+
+## NIVEAUX DE LUMIERE
+
+LUMIERE VIF (Bright Light): Vision normale
+LUMIERE FAIBLE (Dim Light): Zone legerement obscurcie, desavantage Perception vue
+TENEBRES (Darkness): Zone lourdement obscurcie, effectivement aveugle
+
+## VISIONS SPECIALES
+
+Vision dans le noir (Darkvision): Voir dans le noir comme lumiere faible (noir et blanc)
+Vision aveugle (Blindsight): Percevoir sans voir (echolocation, sens speciaux)
+Vision veritable (Truesight): Voir dans le noir, invisibilite, illusions, forme veritable
+
+================================================================================
+CHAPITRE 11: ALIGNEMENTS
+================================================================================
+
+## LES NEUF ALIGNEMENTS
+
+LOYAL BON (Lawful Good): Honorable et altruiste
+NEUTRE BON (Neutral Good): Fait le bien sans extremes
+CHAOTIQUE BON (Chaotic Good): Rebelle au grand coeur
+
+LOYAL NEUTRE (Lawful Neutral): Respecte l'ordre avant tout
+NEUTRE (True Neutral): Equilibre, pragmatisme
+CHAOTIQUE NEUTRE (Chaotic Neutral): Liberte personnelle avant tout
+
+LOYAL MAUVAIS (Lawful Evil): Tyran, exploitation methodique
+NEUTRE MAUVAIS (Neutral Evil): Egoiste sans scrupules
+CHAOTIQUE MAUVAIS (Chaotic Evil): Destructeur, cruel
+
+================================================================================
+CHAPITRE 12: LANGUES
+================================================================================
+
+## LANGUES COMMUNES
+
+Common (Commun): Langue universelle
+Dwarvish (Nain): Nains
+Elvish (Elfique): Elfes
+Giant (Geant): Geants, ogres
+Gnomish (Gnome): Gnomes
+Goblin: Gobelins, hobgobelins, gobelours
+Halfling: Halfelins
+Orc (Orque): Orcs
+
+## LANGUES EXOTIQUES
+
+Abyssal: Demons
+Celestial (Celeste): Anges, celestins
+Draconic (Draconique): Dragons, kobolds, dragonborns
+Deep Speech (Parler des profondeurs): Aberrations
+Infernal: Diables
+Primordial: Elementaires
+Sylvan (Sylvestre): Fees
+Undercommon (Commun des profondeurs): Outreterre
+
+## LANGUES SECRETES
+
+Druidic (Druidique): Druides uniquement
+Thieves Cant (Argot des voleurs): Roublards uniquement
+
+================================================================================
+CHAPITRE 13: EQUIPEMENT
+================================================================================
+
+## ARMES SIMPLES
+
+Corps a corps:
+- Gourdin (Club): 1d4 contondant, leger
+- Dague (Dagger): 1d4 perforant, finesse, leger, lancer
+- Massue (Greatclub): 1d8 contondant, deux mains
+- Hachette (Handaxe): 1d6 tranchant, leger, lancer
+- Javeline (Javelin): 1d6 perforant, lancer
+- Marteau leger (Light Hammer): 1d4 contondant, leger, lancer
+- Masse (Mace): 1d6 contondant
+- Baton (Quarterstaff): 1d6 contondant, versatile (1d8)
+- Faucille (Sickle): 1d4 tranchant, leger
+- Lance (Spear): 1d6 perforant, lancer, versatile (1d8)
+
+A distance:
+- Arbalete legere (Light Crossbow): 1d8 perforant, munitions, chargement, deux mains
+- Dard (Dart): 1d4 perforant, finesse, lancer
+- Arc court (Shortbow): 1d6 perforant, munitions, deux mains
+- Fronde (Sling): 1d4 contondant, munitions
+
+## ARMES DE GUERRE
+
+Corps a corps:
+- Hache d'armes (Battleaxe): 1d8 tranchant, versatile (1d10)
+- Fleaux (Flail): 1d8 contondant
+- Coutille (Glaive): 1d10 tranchant, lourd, allonge, deux mains
+- Epee a deux mains (Greatsword): 2d6 tranchant, lourd, deux mains
+- Hache a deux mains (Greataxe): 1d12 tranchant, lourd, deux mains
+- Hallebarde (Halberd): 1d10 tranchant, lourd, allonge, deux mains
+- Epee longue (Longsword): 1d8 tranchant, versatile (1d10)
+- Maillet (Maul): 2d6 contondant, lourd, deux mains
+- Morgenstern (Morningstar): 1d8 perforant
+- Pique (Pike): 1d10 perforant, lourd, allonge, deux mains
+- Rapiere (Rapier): 1d8 perforant, finesse
+- Cimeterre (Scimitar): 1d6 tranchant, finesse, leger
+- Epee courte (Shortsword): 1d6 perforant, finesse, leger
+- Trident: 1d6 perforant, lancer, versatile (1d8)
+- Marteau de guerre (Warhammer): 1d8 contondant, versatile (1d10)
+- Pic de guerre (War Pick): 1d8 perforant
+- Fouet (Whip): 1d4 tranchant, finesse, allonge
+
+A distance:
+- Sarbacane (Blowgun): 1 perforant, munitions, chargement
+- Arbalete de poing (Hand Crossbow): 1d6 perforant, munitions, leger, chargement
+- Arbalete lourde (Heavy Crossbow): 1d10 perforant, munitions, lourd, chargement, deux mains
+- Arc long (Longbow): 1d8 perforant, munitions, lourd, deux mains
+- Filet (Net): special, lancer
+
+================================================================================
+CHAPITRE 14: MULTICLASSAGE
+================================================================================
+
+## PREREQUIS
+
+Vous devez avoir 13+ dans la caracteristique principale de votre classe actuelle ET de la nouvelle classe.
+
+Barbare: FOR 13
+Barde: CHA 13
+Clerc: SAG 13
+Druide: SAG 13
+Guerrier: FOR 13 ou DEX 13
+Moine: DEX 13 et SAG 13
+Paladin: FOR 13 et CHA 13
+Ranger: DEX 13 et SAG 13
+Roublard: DEX 13
+Sorcier: CHA 13
+Sorcier (Warlock): CHA 13
+Magicien: INT 13
+
+## EMPLACEMENTS DE SORTS
+
+Pour les classes de lanceurs de sorts, les emplacements sont calcules en additionnant les niveaux effectifs:
+- Barde, Clerc, Druide, Sorcier, Magicien: niveau complet
+- Paladin, Ranger: niveau / 2 (arrondi inf)
+- Guerrier (EK), Roublard (AT): niveau / 3 (arrondi inf)
+
+================================================================================
+FIN DU DOCUMENT DE REFERENCE
+================================================================================

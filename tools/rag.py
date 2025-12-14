@@ -1,84 +1,67 @@
 """
-RAG (Retrieval-Augmented Generation) system for D&D documents
-Processes PDFs and enables semantic search
+RAG System v2 - Retrieval-Augmented Generation optimise pour D&D
+Ameliorations:
+- Chunks plus petits (250 mots) pour une meilleure precision
+- Overlap plus grand (75 mots) pour la continuite semantique
+- Reformulation automatique des requetes
+- Meilleur scoring et filtrage des resultats
 """
 
 import os
 from pathlib import Path
-from typing import List, Optional
-import shutil
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_core.documents import Document
-from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
-from typing import Any
+from typing import List, Optional, Dict
+import re
 
-# PDF processing
 try:
-    from pypdf import PdfReader  # PyPDF moderne
+    from pypdf import PdfReader
 except ImportError:
-    from PyPDF2 import PdfReader  # Compatibilité avec PyPDF2
+    from PyPDF2 import PdfReader
 
-# Vector store
-from chromadb import Client
-from chromadb.config import Settings as ChromaSettings
 import chromadb
-
-# Embeddings
 from sentence_transformers import SentenceTransformer
-
-CHROMA_PATH = "./chroma_db"
 
 
 class DocumentProcessor:
-    """Process D&D PDF documents and prepare them for indexing"""
+    """Processeur de documents PDF optimise pour D&D"""
     
     def __init__(self, data_dir: str = "data"):
-        """
-        Args:
-            data_dir (str): Répertoire contenant les PDF
-        """
         self.data_dir = Path(data_dir)
-        self.documents = []  # Liste des documents chargés
+        self.documents = []
     
-    def load_pdf(self, pdf_path: str) -> List[str]:
-        """
-        Charge un PDF et extrait le texte de chaque page.
-        
-        Args:
-            pdf_path (str): Chemin du fichier PDF
-        
-        Returns:
-            List[dict]: Liste de dictionnaires contenant 'text', 'source', 'page'
-        """
+    def load_pdf(self, pdf_path: str) -> List[Dict]:
+        """Charge un PDF et extrait le texte page par page"""
         texts = []
         try:
             reader = PdfReader(pdf_path)
             for page_num, page in enumerate(reader.pages):
                 text = page.extract_text()
-                if text.strip():  # Ignorer les pages vides
-                    texts.append({
-                        'text': text,
-                        'source': Path(pdf_path).name,
-                        'page': page_num + 1
-                    })
-            print(f"Loaded {len(texts)} pages from {Path(pdf_path).name}")
+                if text and text.strip():
+                    # Nettoyage du texte
+                    text = self._clean_text(text)
+                    if len(text) > 50:  # Ignorer pages quasi-vides
+                        texts.append({
+                            'text': text,
+                            'source': Path(pdf_path).name,
+                            'page': page_num + 1
+                        })
+            print(f"[RAG] Charge {len(texts)} pages depuis {Path(pdf_path).name}")
         except Exception as e:
-            print(f"Error loading {pdf_path}: {e}")
-        
+            print(f"[RAG] Erreur chargement {pdf_path}: {e}")
         return texts
     
-    def load_all_pdfs(self) -> List[dict]:
-        """
-        Charge tous les PDFs du répertoire data_dir.
-        
-        Returns:
-            List[dict]: Liste de toutes les pages extraites de tous les PDFs
-        """
+    def _clean_text(self, text: str) -> str:
+        """Nettoie le texte extrait du PDF"""
+        # Normaliser les espaces
+        text = re.sub(r'\s+', ' ', text)
+        # Supprimer caracteres speciaux problematiques
+        text = re.sub(r'[^\w\s.,;:!?\'"-]', '', text)
+        return text.strip()
+    
+    def load_all_pdfs(self) -> List[Dict]:
+        """Charge tous les PDFs et documents texte du repertoire data"""
         all_texts = []
         
-        # Liste des PDFs à charger
+        # PDFs
         pdf_files = [
             self.data_dir / "DnD_BasicRules_2018.pdf",
             self.data_dir / "PlayerHandbook.pdf"
@@ -89,97 +72,161 @@ class DocumentProcessor:
                 texts = self.load_pdf(str(pdf_path))
                 all_texts.extend(texts)
             else:
-                print(f"PDF not found: {pdf_path}")
+                print(f"[RAG] PDF non trouve: {pdf_path}")
+        
+        # Document de reference texte
+        ref_file = self.data_dir / "DnD_Reference_Guide.txt"
+        if ref_file.exists():
+            texts = self.load_text_file(str(ref_file))
+            all_texts.extend(texts)
         
         self.documents = all_texts
         return all_texts
     
-    def chunk_text(self, text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
+    def load_text_file(self, file_path: str) -> List[Dict]:
+        """Charge un fichier texte et le decoupe en sections"""
+        texts = []
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Decouper par chapitres (lignes avec ===)
+            sections = content.split('=' * 80)
+            
+            for i, section in enumerate(sections):
+                section = section.strip()
+                if section and len(section) > 100:
+                    # Nettoyer
+                    section = self._clean_text(section)
+                    texts.append({
+                        'text': section,
+                        'source': Path(file_path).name,
+                        'page': i + 1
+                    })
+            
+            print(f"[RAG] Charge {len(texts)} sections depuis {Path(file_path).name}")
+        except Exception as e:
+            print(f"[RAG] Erreur chargement {file_path}: {e}")
+        
+        return texts
+    
+    def chunk_text(self, text: str, chunk_size: int = 250, overlap: int = 75) -> List[str]:
         """
-        Découpe un texte en morceaux (chunks) avec chevauchement.
+        Decoupe le texte en chunks avec chevauchement
         
         Args:
-            text (str): Texte à découper
-            chunk_size (int): Nombre de mots par chunk
-            overlap (int): Nombre de mots chevauchés entre chunks
-        
-        Returns:
-            List[str]: Liste de chunks de texte
+            chunk_size: Nombre de mots par chunk (250 = optimal pour D&D)
+            overlap: Chevauchement entre chunks (75 = 30% du chunk)
         """
         words = text.split()
         chunks = []
         
-        for i in range(0, len(words), chunk_size - overlap):
+        if len(words) <= chunk_size:
+            return [text] if text.strip() else []
+        
+        step = chunk_size - overlap
+        for i in range(0, len(words), step):
             chunk = ' '.join(words[i:i + chunk_size])
-            if chunk:
+            if chunk.strip():
                 chunks.append(chunk)
         
         return chunks
 
 
 class RAGSystem:
-    """Retrieval-Augmented Generation system for D&D documents"""
+    """Systeme RAG optimise pour les documents D&D"""
     
-    def __init__(self, persist_directory: str = "data/chroma_db"):
-        """
-        Initialise le système RAG avec embeddings et ChromaDB.
-        
-        Args:
-            persist_directory (str): Répertoire pour stocker la base vectorielle
-        """
+    # Mots-cles D&D pour enrichir les recherches
+    DND_SYNONYMS = {
+        'attaque': ['attack', 'hit', 'strike', 'damage', 'melee', 'ranged'],
+        'defense': ['armor', 'ac', 'shield', 'protection', 'defense'],
+        'magie': ['magic', 'spell', 'spellcasting', 'arcane', 'divine', 'magical'],
+        'sort': ['spell', 'cantrip', 'magic', 'incantation'],
+        'monstre': ['monster', 'creature', 'beast', 'enemy', 'foe'],
+        'combat': ['combat', 'battle', 'fight', 'initiative', 'round', 'turn'],
+        'jet': ['roll', 'check', 'save', 'saving throw', 'dice'],
+        'sauvegarde': ['save', 'saving throw', 'constitution', 'dexterity', 'wisdom'],
+        'competence': ['skill', 'ability', 'proficiency', 'check'],
+        'niveau': ['level', 'tier', 'class level'],
+        'classe': ['class', 'fighter', 'wizard', 'rogue', 'cleric', 'barbarian', 'bard', 'druid', 'monk', 'paladin', 'ranger', 'sorcerer', 'warlock'],
+        'race': ['race', 'species', 'elf', 'dwarf', 'human', 'halfling', 'gnome', 'dragonborn', 'tiefling', 'half-orc', 'half-elf'],
+        'equipement': ['equipment', 'gear', 'weapon', 'armor', 'item'],
+        'arme': ['weapon', 'sword', 'bow', 'axe', 'dagger', 'mace', 'staff'],
+        'degat': ['damage', 'harm', 'hurt', 'hit points', 'hp'],
+        'soin': ['heal', 'healing', 'cure', 'restore', 'hit points', 'recovery'],
+        'mouvement': ['movement', 'speed', 'move', 'walk', 'dash', 'disengage'],
+        'action': ['action', 'bonus action', 'reaction', 'free action'],
+        'repos': ['rest', 'short rest', 'long rest', 'recovery'],
+        'condition': ['condition', 'status', 'blinded', 'charmed', 'frightened', 'paralyzed', 'poisoned', 'prone', 'stunned', 'unconscious', 'exhaustion'],
+        'avantage': ['advantage', 'disadvantage'],
+        'concentration': ['concentration', 'maintain', 'spell concentration'],
+        'opportunite': ['opportunity', 'opportunity attack', 'reaction'],
+        'couverture': ['cover', 'half cover', 'three-quarters cover', 'total cover'],
+        'lumiere': ['light', 'darkness', 'dim light', 'bright light', 'darkvision', 'blindsight'],
+        'alignement': ['alignment', 'lawful', 'chaotic', 'good', 'evil', 'neutral'],
+        'mort': ['death', 'dying', 'death save', 'unconscious', 'stabilize'],
+        'critique': ['critical', 'critical hit', 'natural 20', 'crit'],
+        'resistance': ['resistance', 'immunity', 'vulnerability'],
+        'multiclasse': ['multiclass', 'multiclassing', 'multi-class'],
+        'caracteristique': ['ability', 'ability score', 'strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma', 'stat'],
+        'pv': ['hit points', 'hp', 'health', 'life'],
+        'ca': ['armor class', 'ac', 'defense'],
+        'initiative': ['initiative', 'turn order', 'combat order'],
+        'terrain': ['terrain', 'difficult terrain', 'movement'],
+        'vision': ['vision', 'sight', 'darkvision', 'blindsight', 'truesight'],
+    }
+    
+    def __init__(self, persist_directory: str = "data/chroma_db_v2"):
         self.persist_directory = Path(persist_directory)
         self.persist_directory.mkdir(parents=True, exist_ok=True)
         
-        # Charger le modèle d'embeddings
-        print("Loading embedding model...")
+        print("[RAG] Chargement du modele d'embeddings...")
         self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
         
-        # Initialiser ChromaDB
         self.client = chromadb.PersistentClient(path=str(self.persist_directory))
         
         try:
-            # Essayer de charger la collection existante
-            self.collection = self.client.get_collection("dnd_documents")
-            print("Loaded existing document collection")
+            self.collection = self.client.get_collection("dnd_docs_v2")
+            print(f"[RAG] Collection existante chargee ({self.collection.count()} chunks)")
         except:
-            # Sinon créer une nouvelle collection
             self.collection = self.client.create_collection(
-                name="dnd_documents",
-                metadata={"description": "D&D 5e rules and handbook"}
+                name="dnd_docs_v2",
+                metadata={"description": "D&D 5e documents - optimized chunks"}
             )
-            print("Created new document collection")
+            print("[RAG] Nouvelle collection creee")
         
-        # Initialiser le processeur de documents PDF
         self.doc_processor = DocumentProcessor()
     
-    def index_documents(self, force_reindex: bool = False):
+    def _expand_query(self, query: str) -> str:
         """
-        Indexe tous les documents D&D en utilisant embeddings.
+        Enrichit la requete avec des synonymes D&D
+        Ameliore la recherche semantique
+        """
+        query_lower = query.lower()
+        expanded_terms = [query]
         
-        Args:
-            force_reindex (bool): Reindexe même si des documents existent déjà
-        """
-        # Vérifier si la collection contient déjà des documents
+        for french_term, english_terms in self.DND_SYNONYMS.items():
+            if french_term in query_lower:
+                expanded_terms.extend(english_terms[:2])  # Max 2 synonymes
+        
+        return ' '.join(expanded_terms)
+    
+    def index_documents(self, force_reindex: bool = False):
+        """Indexe les documents avec des chunks optimises"""
         if self.collection.count() > 0 and not force_reindex:
-            print(f"Collection already contains {self.collection.count()} documents")
+            print(f"[RAG] Collection deja indexee ({self.collection.count()} chunks)")
             return
         
-        print("Indexing D&D documents...")
-        
-        # Charger tous les PDFs
+        print("[RAG] Indexation des documents D&D...")
         documents = self.doc_processor.load_all_pdfs()
         
         if not documents:
-            print("No documents found to index")
+            print("[RAG] Aucun document trouve")
             return
         
-        # Préparer les données pour l'indexation
-        texts = []
-        metadatas = []
-        ids = []
+        texts, metadatas, ids = [], [], []
         
         for idx, doc in enumerate(documents):
-            # Découper le texte en chunks
             chunks = self.doc_processor.chunk_text(doc['text'])
             
             for chunk_idx, chunk in enumerate(chunks):
@@ -191,14 +238,13 @@ class RAGSystem:
                 })
                 ids.append(f"{doc['source']}_p{doc['page']}_c{chunk_idx}")
         
-        # Ajouter les chunks à la collection en batch
-        batch_size = 100
+        # Indexation par batch
+        batch_size = 50
         for i in range(0, len(texts), batch_size):
             batch_texts = texts[i:i + batch_size]
             batch_metadatas = metadatas[i:i + batch_size]
             batch_ids = ids[i:i + batch_size]
             
-            # Générer les embeddings pour le batch
             embeddings = self.embedding_model.encode(batch_texts).tolist()
             
             self.collection.add(
@@ -207,57 +253,53 @@ class RAGSystem:
                 metadatas=batch_metadatas,
                 ids=batch_ids
             )
-            
-            print(f"  Indexed {min(i + batch_size, len(texts))}/{len(texts)} chunks")
+            print(f"[RAG] Indexe {min(i + batch_size, len(texts))}/{len(texts)}")
         
-        print(f"Indexed {len(texts)} document chunks")
+        print(f"[RAG] Indexation terminee: {len(texts)} chunks")
     
-    def search(self, query: str, n_results: int = 5) -> List[dict]:
+    def search(self, query: str, n_results: int = 5, min_score: float = 0.3) -> List[Dict]:
         """
-        Recherche les documents les plus pertinents pour une requête.
+        Recherche semantique avec filtrage par score
         
         Args:
-            query (str): Texte de recherche
-            n_results (int): Nombre de résultats souhaités
-        
-        Returns:
-            List[dict]: Résultats contenant texte, metadata, distance
+            query: Texte de recherche
+            n_results: Nombre de resultats max
+            min_score: Score minimum de pertinence (0-1, plus bas = plus pertinent)
         """
         if self.collection.count() == 0:
-            print("No documents indexed. Run index_documents() first.")
+            print("[RAG] Aucun document indexe")
             return []
         
-        # Générer l'embedding de la requête
-        query_embedding = self.embedding_model.encode([query])[0].tolist()
+        # Enrichir la requete
+        expanded_query = self._expand_query(query)
+        query_embedding = self.embedding_model.encode([expanded_query])[0].tolist()
         
-        # Effectuer la recherche dans la collection
         results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=n_results
+            n_results=n_results * 2  # Recuperer plus pour filtrer ensuite
         )
         
-        # Formater les résultats
-        formatted_results = []
-        if results['documents'] and len(results['documents']) > 0:
+        formatted = []
+        if results['documents'] and results['documents'][0]:
             for i, doc in enumerate(results['documents'][0]):
-                formatted_results.append({
-                    'text': doc,
-                    'metadata': results['metadatas'][0][i] if results['metadatas'] else {},
-                    'distance': results['distances'][0][i] if results.get('distances') else 0
-                })
+                distance = results['distances'][0][i] if results.get('distances') else 0
+                
+                # Filtrer par score (distance < min_score = pertinent)
+                if distance < min_score or len(formatted) < 3:  # Garder au moins 3
+                    formatted.append({
+                        'text': doc,
+                        'metadata': results['metadatas'][0][i] if results['metadatas'] else {},
+                        'score': round(1 - distance, 3)  # Convertir en score (plus haut = mieux)
+                    })
+                
+                if len(formatted) >= n_results:
+                    break
         
-        return formatted_results
+        return formatted
     
-    def get_context_for_query(self, query: str, n_results: int = 3) -> str:
+    def get_context_for_query(self, query: str, n_results: int = 4) -> str:
         """
-        Récupère un contexte textuel pour une requête, en concaténant les meilleurs résultats.
-        
-        Args:
-            query (str): Question ou mot-clé
-            n_results (int): Nombre de documents à inclure
-        
-        Returns:
-            str: Concaténation des textes pertinents avec référence source/page
+        Genere un contexte textuel pour le LLM
         """
         results = self.search(query, n_results)
         
@@ -265,81 +307,22 @@ class RAGSystem:
             return ""
         
         context_parts = []
-        for i, result in enumerate(results, 1):
-            source = result['metadata'].get('source', 'Unknown')
+        for result in results:
+            source = result['metadata'].get('source', 'Source inconnue')
             page = result['metadata'].get('page', '?')
+            score = result.get('score', 0)
             text = result['text']
             
-            context_parts.append(f"[{source}, p.{page}]\n{text}")
+            # Format compact pour le contexte
+            context_parts.append(f"[{source} p.{page}] (pertinence: {score})\n{text}")
         
-        return "\n\n".join(context_parts)
+        return "\n\n---\n\n".join(context_parts)
     
     def search_rule(self, rule_query: str) -> str:
-        """
-        Recherche une règle spécifique de D&D dans les documents.
-        
-        Args:
-            rule_query (str): Question ou nom de la règle
-        
-        Returns:
-            str: Contexte trouvé ou message d'erreur si aucun document n'est indexé
-        """
-        context = self.get_context_for_query(rule_query, n_results=3)
+        """Recherche une regle specifique"""
+        context = self.get_context_for_query(rule_query, n_results=4)
         
         if not context:
-            return "Aucune règle trouvée. Assure-toi que les documents sont indexés."
+            return "Aucune regle trouvee. Verifie que les documents sont indexes."
         
-        return f"Règles trouvées:\n\n{context}"
-
-
-# Class de Jer pour le rag
-class RagAgent:
-
-    def __init__(self, file_path: str):
-        documents = self._load_documents_from_pdf(file_path)
-        chunks = self._split_text(documents)
-        self._save_to_chroma(chunks)
-
-    def _get_embedding_function(self):
-        embeddings = OpenAIEmbeddings(
-            base_url="http://127.0.0.1:1234/v1",
-            api_key="lm-studio",
-            check_embedding_ctx_length=False
-        )
-        return embeddings
-
-    def _load_documents_from_pdf(self, file_path: str) -> Any:
-        loader = PyPDFLoader(file_path)
-        documents = loader.load()
-        return documents
-
-    def _split_text(self, documents: list[Document]):
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=100,
-            length_function=len,
-            add_start_index=True
-        )
-        chunks = text_splitter.split_documents(documents)
-        print(f"Split {len(documents)} documents into {len(chunks)} chunks")
-
-        return chunks
-
-    def _save_to_chroma(self, chunks: list[Document]):
-
-        if os.path.exists(CHROMA_PATH):
-            shutil.rmtree(CHROMA_PATH)
-        self.db = Chroma(
-            embedding_function=self._get_embedding_function(),
-            persist_directory=CHROMA_PATH
-        )
-        self.db.add_documents(chunks)
-        print(f"Saved {len(chunks)} chunks to Chroma at {CHROMA_PATH}")
-
-    def query(self, query_text: str):
-        results = self.db.similarity_search_with_relevance_scores(query_text, k=3)
-        if len(results) == 0:
-            print("No relevant results found.")
-            return
-        context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
-        return context_text
+        return f"Regles trouvees:\n\n{context}"

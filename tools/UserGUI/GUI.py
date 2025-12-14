@@ -1,569 +1,1223 @@
 """
-Retro 8-bit D&D Assistant GUI - Complete Working Version
-Interface graphique principale pour l'assistant D&D
+Le Grimoire du Maitre du Donjon v4
+Interface complete pour D&D 5e
 
-Fonctionnalites:
-- Chat avec IA pour repondre aux questions D&D
-- Recherche de monstres dans la base de donnees
-- Recherche de regles via systeme RAG
-- Tracker d'initiative pour gerer les combats
-- Generateur de donjons via IA
-- Outils du maitre (des, rencontres, PNJ, etc.)
-
-Theme visuel: Retro 8-bit avec palette orange/noir/rouge/or
+Nouveautes v4:
+- Auto-completion dans les recherches (Monstre, Item, Sort, Regle)
+- Generateur de noms enrichi (15+ categories)
+- Generateur de tresor
+- Suppression du lanceur de des
 """
 
 import customtkinter as ctk
-from tkinter import messagebox, filedialog
+from tkinter import messagebox
 import sys
-import json
 import random
 from pathlib import Path
-from datetime import datetime
+from typing import List, Callable
 
-# Ajouter le chemin parent pour importer les modules tools
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 try:
-    from tools.model import DnDAssistantModel  # Interface avec LLM (LM Studio/Ollama)
-    from tools.rag import RAGSystem  # Systeme de recherche dans les PDFs
-    from tools.db import MonsterDatabase  # Base de donnees des monstres
+    from tools.model_v2 import DnDAssistantModel
+    from tools.rag_v2 import RAGSystem
+    from tools.db_v2 import MonsterDatabase, SpellDatabase, ItemDatabase
 except ImportError as e:
-    print(f"Import error: {e}")
-    print("Make sure all required files are present")
+    print(f"Erreur import: {e}")
+    try:
+        from tools.model import DnDAssistantModel
+        from tools.rag import RAGSystem
+        from tools.db import MonsterDatabase
+        SpellDatabase = None
+        ItemDatabase = None
+    except ImportError:
+        print("Modules introuvables")
 
 
-# ======================== HELPER CLASSES ========================
+class AutocompleteEntry(ctk.CTkFrame):
+    """Champ de saisie avec auto-completion"""
+    
+    def __init__(self, parent, suggestions_source: Callable, placeholder: str, 
+                 colors: dict, on_select: Callable = None, **kwargs):
+        super().__init__(parent, fg_color="transparent")
+        
+        self.suggestions_source = suggestions_source
+        self.on_select = on_select
+        self.colors = colors
+        self.suggestions = []
+        self.selected_index = -1
+        
+        # Champ de saisie
+        self.entry = ctk.CTkEntry(
+            self,
+            font=("Courier", 12),
+            fg_color=colors['bg_light'],
+            text_color=colors['text'],
+            placeholder_text=placeholder,
+            height=35
+        )
+        self.entry.pack(fill="x")
+        self.entry.bind("<KeyRelease>", self._on_key_release)
+        self.entry.bind("<Return>", self._on_enter)
+        self.entry.bind("<Down>", self._on_down)
+        self.entry.bind("<Up>", self._on_up)
+        self.entry.bind("<Escape>", self._hide_suggestions)
+        
+        # Liste de suggestions (cachee par defaut)
+        self.listbox_frame = ctk.CTkFrame(self, fg_color=colors['bg_med'])
+        self.suggestion_buttons = []
+        
+    def _on_key_release(self, event):
+        if event.keysym in ('Up', 'Down', 'Return', 'Escape'):
+            return
+        
+        query = self.entry.get().strip()
+        if len(query) >= 2:
+            self._update_suggestions(query)
+        else:
+            self._hide_suggestions(None)
+    
+    def _update_suggestions(self, query: str):
+        # Obtenir les suggestions
+        self.suggestions = self.suggestions_source(query)[:8]  # Max 8 suggestions
+        
+        # Nettoyer les anciens boutons
+        for btn in self.suggestion_buttons:
+            btn.destroy()
+        self.suggestion_buttons = []
+        
+        if not self.suggestions:
+            self._hide_suggestions(None)
+            return
+        
+        # Afficher le frame de suggestions
+        self.listbox_frame.pack(fill="x", pady=(2, 0))
+        
+        # Creer les boutons de suggestion
+        for i, suggestion in enumerate(self.suggestions):
+            btn = ctk.CTkButton(
+                self.listbox_frame,
+                text=suggestion,
+                font=("Courier", 10),
+                fg_color=self.colors['bg_light'],
+                hover_color=self.colors['orange'],
+                text_color=self.colors['text'],
+                anchor="w",
+                height=28,
+                corner_radius=0,
+                command=lambda s=suggestion: self._select_suggestion(s)
+            )
+            btn.pack(fill="x", padx=2, pady=1)
+            self.suggestion_buttons.append(btn)
+        
+        self.selected_index = -1
+    
+    def _select_suggestion(self, suggestion: str):
+        self.entry.delete(0, "end")
+        self.entry.insert(0, suggestion)
+        self._hide_suggestions(None)
+        if self.on_select:
+            self.on_select()
+    
+    def _on_enter(self, event):
+        if self.selected_index >= 0 and self.selected_index < len(self.suggestions):
+            self._select_suggestion(self.suggestions[self.selected_index])
+        elif self.on_select:
+            self._hide_suggestions(None)
+            self.on_select()
+    
+    def _on_down(self, event):
+        if self.suggestions:
+            self.selected_index = min(self.selected_index + 1, len(self.suggestions) - 1)
+            self._highlight_selection()
+    
+    def _on_up(self, event):
+        if self.suggestions:
+            self.selected_index = max(self.selected_index - 1, 0)
+            self._highlight_selection()
+    
+    def _highlight_selection(self):
+        for i, btn in enumerate(self.suggestion_buttons):
+            if i == self.selected_index:
+                btn.configure(fg_color=self.colors['orange'], text_color="#000000")
+            else:
+                btn.configure(fg_color=self.colors['bg_light'], text_color=self.colors['text'])
+    
+    def _hide_suggestions(self, event):
+        self.listbox_frame.pack_forget()
+        for btn in self.suggestion_buttons:
+            btn.destroy()
+        self.suggestion_buttons = []
+        self.suggestions = []
+        self.selected_index = -1
+    
+    def get(self) -> str:
+        return self.entry.get()
+    
+    def delete(self, start, end):
+        self.entry.delete(start, end)
+    
+    def insert(self, index, text):
+        self.entry.insert(index, text)
+    
+    def bind(self, event, callback):
+        self.entry.bind(event, callback)
+
+
+class NameGenerator:
+    """Generateur de noms fantasy enrichi"""
+    
+    # Prenoms masculins par culture
+    MALE_NAMES = {
+        'humain': ["Aldric", "Bran", "Cedric", "Darius", "Edmund", "Farin", "Gareth", "Harald", 
+                   "Ivan", "Jasper", "Klaus", "Leon", "Marcus", "Nolan", "Owen", "Pierce",
+                   "Quinn", "Roland", "Stefan", "Theron", "Ulric", "Viktor", "Wilhelm", "Xavier"],
+        'elfe': ["Aelindor", "Caelum", "Eldrin", "Faelar", "Galadorn", "Ilthuryn", "Luthien",
+                 "Naerion", "Quildor", "Rhistel", "Sylvaris", "Thalion", "Vaeril", "Zephyrus"],
+        'nain': ["Balin", "Dain", "Fargrim", "Gimli", "Harbek", "Kildrak", "Morgran",
+                 "Orsik", "Rangrim", "Thorin", "Ulfgar", "Vondal", "Werend"],
+        'halfelin': ["Alton", "Cade", "Corrin", "Eldon", "Finnan", "Garret", "Lindal",
+                     "Merric", "Osborn", "Perrin", "Roscoe", "Wellby"],
+        'orc': ["Dench", "Gell", "Henk", "Holg", "Imsh", "Krusk", "Mhurren", "Ront", "Shump", "Thokk"],
+        'tiefling': ["Akmenos", "Amnon", "Barakas", "Damakos", "Ekemon", "Iados", "Kairon",
+                     "Leucis", "Melech", "Mordai", "Morthos", "Pelaios", "Skamos", "Therai"]
+    }
+    
+    # Prenoms feminins par culture
+    FEMALE_NAMES = {
+        'humain': ["Alina", "Brynn", "Celeste", "Diana", "Elena", "Freya", "Gwendolyn",
+                   "Helena", "Isolde", "Juliana", "Katarina", "Lyra", "Miranda", "Natasha",
+                   "Ophelia", "Petra", "Quinn", "Rowena", "Selene", "Thea", "Una", "Vera", "Wren"],
+        'elfe': ["Adrie", "Caelynn", "Drusilia", "Enna", "Felosial", "Galinndan", "Irann",
+                 "Keyleth", "Lia", "Mialee", "Naivara", "Quelenna", "Sariel", "Thia", "Valanthe"],
+        'nain': ["Amber", "Artin", "Bardryn", "Dagnal", "Diesa", "Gunnloda", "Helja",
+                 "Kathra", "Kristryd", "Mardred", "Riswynn", "Torgga", "Vistra"],
+        'halfelin': ["Andry", "Bree", "Callie", "Cora", "Euphemia", "Jillian", "Kithri",
+                     "Lavinia", "Lidda", "Merla", "Nedda", "Paela", "Portia", "Seraphina", "Vani"],
+        'orc': ["Baggi", "Emen", "Engong", "Kansif", "Myev", "Neega", "Ovak", "Ownka", "Shautha", "Vola"],
+        'tiefling': ["Akta", "Bryseis", "Damaia", "Ea", "Kallista", "Lerissa", "Makaria",
+                     "Nemeia", "Orianna", "Phelaia", "Rieta"]
+    }
+    
+    # Noms de famille par culture
+    SURNAMES = {
+        'humain': ["Forgefeu", "Hautecolline", "Briseciel", "Lameblanche", "Corvinus", "Duval",
+                   "Montclair", "Beaumont", "Chevalier", "Dubois", "Lefebvre", "Moreau"],
+        'elfe': ["Amastacia", "Galanodel", "Holimion", "Liadon", "Meliamne", "Nailo",
+                 "Siannodel", "Xiloscient"],
+        'nain': ["Forgepoing", "Brisebranches", "Marteaudore", "Ecubouclier", "Gardehache",
+                 "Pieddefer", "Coeudepierre"],
+        'noble': ["de Montfort", "von Steinberg", "di Medici", "van der Berg", "le Grand",
+                  "d'Aragon", "de Valois", "von Habsburg"]
+    }
+    
+    # Noms de tavernes
+    TAVERN_PARTS = {
+        'adj': ["Joyeux", "Vieux", "Noir", "Rouge", "Dore", "Argente", "Borgne", "Ivre",
+                "Sage", "Fou", "Brave", "Fier", "Sombre", "Blanc", "Vert", "Bleu"],
+        'noun': ["Dragon", "Griffon", "Sanglier", "Loup", "Corbeau", "Cerf", "Ours", "Aigle",
+                 "Gobelin", "Troll", "Ogre", "Chevalier", "Mage", "Barde", "Nain", "Elfe",
+                 "Phoenix", "Licorne", "Hippogriffe", "Chimere", "Basilic", "Wyverne"],
+        'prefix': ["Au", "Le", "La", "L'Auberge du", "La Taverne du", "Chez le", "A l'Enseigne du"]
+    }
+    
+    # Noms de boutiques
+    SHOP_NAMES = {
+        'forge': ["La Forge", "L'Enclume", "Le Marteau", "Les Lames", "L'Acier"],
+        'alchimie': ["Le Chaudron", "La Fiole", "L'Alambic", "Les Herbes", "L'Elixir"],
+        'magie': ["La Baguette", "Le Grimoire", "L'Arcane", "Le Cristal", "Les Runes"],
+        'general': ["Le Bazar", "L'Emporium", "Le Comptoir", "La Boutique", "Le Marche"],
+        'armure': ["Le Bouclier", "La Cuirasse", "L'Armurerie", "La Maille"],
+        'bijoux': ["Le Joyau", "L'Eclat", "La Gemme", "Le Diamant", "L'Or Fin"]
+    }
+    
+    # Noms de lieux
+    PLACE_PARTS = {
+        'prefix': ["Fort", "Chateau", "Tour", "Donjon", "Cite", "Village", "Hameau", "Val",
+                   "Mont", "Port", "Pont", "Bois", "Lac", "Ile", "Ruines de"],
+        'suffix': ["noir", "blanc", "rouge", "ancien", "perdu", "maudit", "sacre", "oublie",
+                   "sombre", "lumineux", "eternel", "brise", "gel", "feu", "vent"]
+    }
+    
+    # Noms de guildes
+    GUILD_NAMES = {
+        'type': ["Guilde", "Ordre", "Confrerie", "Loge", "Cercle", "Alliance", "Compagnie"],
+        'theme': ["des Ombres", "du Soleil Levant", "de l'Epee Brisee", "du Dragon d'Or",
+                  "des Marchands", "des Artisans", "des Voleurs", "des Assassins",
+                  "des Mages", "des Guerriers", "de la Main Noire", "du Serpent",
+                  "du Phenix", "de l'Ancre", "du Corbeau", "de la Lune"]
+    }
+    
+    # Noms de navires
+    SHIP_NAMES = {
+        'prefix': ["Le", "La", "L'"],
+        'adj': ["Rapide", "Fier", "Noir", "Rouge", "Dore", "Fantome", "Sombre", "Royal"],
+        'noun': ["Sirene", "Triton", "Kraken", "Leviathan", "Tempete", "Eclair", "Vent",
+                 "Maree", "Etoile", "Lune", "Soleil", "Dragon", "Serpent", "Requin", "Mouette"]
+    }
+    
+    # Noms de sorts
+    SPELL_NAME_PARTS = {
+        'possessor': ["Mordenkainen", "Bigby", "Tasha", "Melf", "Otiluke", "Leomund",
+                      "Tenser", "Evard", "Nystul", "Rary", "Drawmij"],
+        'type': ["Sphere", "Rayon", "Eclair", "Bouclier", "Main", "Chaine", "Prison",
+                 "Cage", "Manteau", "Souffle", "Vague", "Tempete", "Lame"],
+        'element': ["de Feu", "de Glace", "de Foudre", "d'Acide", "de Force", "de Mort",
+                    "de Lumiere", "d'Ombre", "Arcanique", "Divin", "Spectral"]
+    }
+    
+    # Noms de familiers
+    FAMILIAR_NAMES = ["Ombre", "Croc", "Plume", "Griffe", "Ecaille", "Poil", "Bec", "Aile",
+                      "Nuit", "Lune", "Etoile", "Brume", "Fumee", "Cendre", "Charbon",
+                      "Onyx", "Jade", "Rubis", "Saphir", "Emeraude", "Obsidienne"]
+    
+    # Noms de demons/diables
+    DEMON_NAMES = {
+        'prefix': ["Bal", "Graz", "Orcus", "Dem", "Yeen", "Zug", "Mol", "Bel", "Asmo", "Dis"],
+        'suffix': ["zul", "gor", "oth", "nax", "riel", "khan", "mog", "thar", "zor", "deus"]
+    }
+    
+    # Noms de dragons
+    DRAGON_NAMES = {
+        'prefix': ["Ald", "Bala", "Cyan", "Drax", "Eryth", "Fafn", "Glau", "Ixen", "Kala", 
+                   "Mala", "Nith", "Orm", "Pala", "Rash", "Syr", "Thra", "Vorn", "Xar", "Zeph"],
+        'suffix': ["ryx", "thorn", "wing", "scale", "fire", "frost", "storm", "claw", 
+                   "fang", "breath", "ax", "ius", "or", "ion", "ath", "yx"]
+    }
+    
+    @classmethod
+    def generate(cls, category: str) -> str:
+        """Genere un nom selon la categorie"""
+        
+        if category == "Humain (M)":
+            first = random.choice(cls.MALE_NAMES['humain'])
+            last = random.choice(cls.SURNAMES['humain'])
+            return f"{first} {last}"
+        
+        elif category == "Humain (F)":
+            first = random.choice(cls.FEMALE_NAMES['humain'])
+            last = random.choice(cls.SURNAMES['humain'])
+            return f"{first} {last}"
+        
+        elif category == "Elfe (M)":
+            first = random.choice(cls.MALE_NAMES['elfe'])
+            last = random.choice(cls.SURNAMES['elfe'])
+            return f"{first} {last}"
+        
+        elif category == "Elfe (F)":
+            first = random.choice(cls.FEMALE_NAMES['elfe'])
+            last = random.choice(cls.SURNAMES['elfe'])
+            return f"{first} {last}"
+        
+        elif category == "Nain (M)":
+            first = random.choice(cls.MALE_NAMES['nain'])
+            last = random.choice(cls.SURNAMES['nain'])
+            return f"{first} {last}"
+        
+        elif category == "Nain (F)":
+            first = random.choice(cls.FEMALE_NAMES['nain'])
+            last = random.choice(cls.SURNAMES['nain'])
+            return f"{first} {last}"
+        
+        elif category == "Halfelin (M)":
+            first = random.choice(cls.MALE_NAMES['halfelin'])
+            return first
+        
+        elif category == "Halfelin (F)":
+            first = random.choice(cls.FEMALE_NAMES['halfelin'])
+            return first
+        
+        elif category == "Orc":
+            return random.choice(cls.MALE_NAMES['orc'] + cls.FEMALE_NAMES['orc'])
+        
+        elif category == "Tiefling (M)":
+            return random.choice(cls.MALE_NAMES['tiefling'])
+        
+        elif category == "Tiefling (F)":
+            return random.choice(cls.FEMALE_NAMES['tiefling'])
+        
+        elif category == "Noble":
+            gender = random.choice(['humain'])
+            first = random.choice(cls.MALE_NAMES[gender] + cls.FEMALE_NAMES[gender])
+            last = random.choice(cls.SURNAMES['noble'])
+            return f"{first} {last}"
+        
+        elif category == "Taverne":
+            pattern = random.choice([
+                f"{random.choice(cls.TAVERN_PARTS['prefix'])} {random.choice(cls.TAVERN_PARTS['adj'])} {random.choice(cls.TAVERN_PARTS['noun'])}",
+                f"Au {random.choice(cls.TAVERN_PARTS['noun'])} {random.choice(cls.TAVERN_PARTS['adj'])}",
+                f"L'Auberge du {random.choice(cls.TAVERN_PARTS['noun'])}",
+                f"Chez {random.choice(cls.MALE_NAMES['humain'])}"
+            ])
+            return pattern
+        
+        elif category == "Boutique (Forge)":
+            base = random.choice(cls.SHOP_NAMES['forge'])
+            owner = random.choice(cls.MALE_NAMES['nain'] + cls.MALE_NAMES['humain'])
+            return f"{base} de {owner}"
+        
+        elif category == "Boutique (Magie)":
+            base = random.choice(cls.SHOP_NAMES['magie'])
+            owner = random.choice(cls.MALE_NAMES['elfe'] + cls.FEMALE_NAMES['elfe'])
+            return f"{base} d'{owner}" if owner[0] in "AEIOU" else f"{base} de {owner}"
+        
+        elif category == "Boutique (General)":
+            base = random.choice(cls.SHOP_NAMES['general'])
+            owner = random.choice(cls.MALE_NAMES['humain'] + cls.MALE_NAMES['halfelin'])
+            return f"{base} de {owner}"
+        
+        elif category == "Lieu/Ville":
+            pattern = random.choice([
+                f"{random.choice(cls.PLACE_PARTS['prefix'])}-{random.choice(cls.PLACE_PARTS['suffix'])}",
+                f"{random.choice(cls.PLACE_PARTS['prefix'])} {random.choice(cls.MALE_NAMES['humain'])}",
+                f"{random.choice(cls.PLACE_PARTS['prefix'])} de {random.choice(cls.SURNAMES['humain'])}"
+            ])
+            return pattern
+        
+        elif category == "Guilde":
+            return f"{random.choice(cls.GUILD_NAMES['type'])} {random.choice(cls.GUILD_NAMES['theme'])}"
+        
+        elif category == "Navire":
+            return f"{random.choice(cls.SHIP_NAMES['prefix'])} {random.choice(cls.SHIP_NAMES['adj'])} {random.choice(cls.SHIP_NAMES['noun'])}"
+        
+        elif category == "Sort":
+            return f"{random.choice(cls.SPELL_NAME_PARTS['type'])} {random.choice(cls.SPELL_NAME_PARTS['element'])} de {random.choice(cls.SPELL_NAME_PARTS['possessor'])}"
+        
+        elif category == "Familier":
+            return random.choice(cls.FAMILIAR_NAMES)
+        
+        elif category == "Demon/Diable":
+            return f"{random.choice(cls.DEMON_NAMES['prefix'])}{random.choice(cls.DEMON_NAMES['suffix'])}"
+        
+        elif category == "Dragon":
+            return f"{random.choice(cls.DRAGON_NAMES['prefix'])}{random.choice(cls.DRAGON_NAMES['suffix'])}"
+        
+        return "Nom inconnu"
+
+
+class TreasureGenerator:
+    """Generateur de tresor D&D"""
+    
+    # Pieces par niveau de tresor
+    COINS = {
+        'faible': {'cp': (5, 30), 'sp': (3, 18), 'gp': (1, 6)},
+        'moyen': {'sp': (10, 60), 'gp': (5, 30), 'pp': (0, 3)},
+        'eleve': {'gp': (20, 120), 'pp': (2, 12)},
+        'epique': {'gp': (100, 600), 'pp': (10, 60)}
+    }
+    
+    # Gemmes par valeur
+    GEMS = {
+        10: ["Azurite", "Agate", "Quartz bleu", "Hematite", "Lapis-lazuli", "Malachite",
+             "Obsidienne", "Rhodochrosite", "Oeil-de-tigre", "Turquoise"],
+        50: ["Jaspe sanguin", "Cornaline", "Calcedoine", "Chrysoprase", "Citrine",
+             "Cristal de roche", "Jade", "Onyx", "Zircon"],
+        100: ["Ambre", "Amethyste", "Chrysoberyl", "Corail", "Grenat", "Jais",
+              "Perle", "Spinelle", "Tourmaline"],
+        500: ["Alexandrite", "Aigue-marine", "Perle noire", "Topaze bleue", "Peridot"],
+        1000: ["Emeraude", "Opale noire", "Saphir bleu", "Opale de feu", "Saphir jaune"],
+        5000: ["Diamant", "Jacynthe", "Rubis", "Saphir etoile", "Emeraude etoile"]
+    }
+    
+    # Objets d'art par valeur
+    ART_OBJECTS = {
+        25: ["Statuette en os sculpte", "Bracelet en or simple", "Vetements en tissu dore",
+             "Masque de velours brode", "Calice en argent", "Des en os incrustes"],
+        250: ["Anneau en or avec gemme", "Coupe en argent gravee", "Harpe en bois precieux",
+              "Statuette en ivoire", "Pendentif en or massif", "Couronne en argent"],
+        750: ["Coffret en argent incrusté de gemmes", "Portrait peint d'un noble",
+              "Collier de perles fines", "Sceptre en or plaque", "Calice en or grave"],
+        2500: ["Tapisserie brodee de fil d'or", "Couronne en or avec gemmes",
+               "Statuette en or massif", "Armure de parade ouvragee"],
+        7500: ["Coffret en or avec rubis", "Couronne royale ornee", "Sceptre imperial",
+               "Trone miniature en or massif"]
+    }
+    
+    # Items magiques par rarete
+    MAGIC_ITEMS = {
+        'commun': [
+            "Potion de soins", "Parchemin de sort (niveau 1)", "Munitions +1 (10)",
+            "Potion d'escalade", "Bougie de verite", "Cape de billowing"
+        ],
+        'peu commun': [
+            "Potion de soins superieurs", "Parchemin de sort (niveau 2-3)",
+            "Arme +1", "Armure +1", "Baguette de detection de la magie",
+            "Bottes elfiques", "Cape elfique", "Sac sans fond", 
+            "Lunettes de nuit", "Pierre ioun (sustentation)", "Anneau de nage",
+            "Amulette de preuve contre la detection", "Gants de voleur"
+        ],
+        'rare': [
+            "Potion de soins excellents", "Parchemin de sort (niveau 4-5)",
+            "Arme +2", "Armure +2", "Anneau de protection", "Cape de protection",
+            "Ceinture de force de geant des collines", "Baguette de boules de feu",
+            "Epee ardente", "Bottes ailees", "Collier de boules de feu",
+            "Bracelets de defense", "Corde d'enchevêtrement"
+        ],
+        'tres rare': [
+            "Potion de soins supremes", "Parchemin de sort (niveau 6-8)",
+            "Arme +3", "Armure +3", "Ceinture de force de geant du feu",
+            "Tapis volant", "Baguette de polymorphie", "Baton de feu",
+            "Epee vorpale", "Anneau de regeneration", "Cape de deplacement"
+        ],
+        'legendaire': [
+            "Parchemin de sort (niveau 9)", "Armure d'invulnerabilite",
+            "Ceinture de force de geant des tempetes", "Baton du mage",
+            "Epee de reponse", "Cube de force", "Sphere d'annihilation",
+            "Anneau des trois souhaits", "Manuel des golems"
+        ]
+    }
+    
+    @classmethod
+    def generate(cls, level: str, include_magic: bool = True) -> dict:
+        """Genere un tresor complet"""
+        result = {
+            'coins': {},
+            'gems': [],
+            'art': [],
+            'magic_items': []
+        }
+        
+        # Pieces
+        coin_tier = {
+            'Faible (CR 0-4)': 'faible',
+            'Moyen (CR 5-10)': 'moyen',
+            'Eleve (CR 11-16)': 'eleve',
+            'Epique (CR 17+)': 'epique'
+        }.get(level, 'moyen')
+        
+        for coin, (min_val, max_val) in cls.COINS[coin_tier].items():
+            amount = random.randint(min_val, max_val)
+            if amount > 0:
+                result['coins'][coin] = amount
+        
+        # Gemmes (chance variable selon niveau)
+        gem_chance = {'faible': 0.2, 'moyen': 0.4, 'eleve': 0.6, 'epique': 0.8}[coin_tier]
+        if random.random() < gem_chance:
+            gem_values = {'faible': [10, 50], 'moyen': [50, 100], 
+                         'eleve': [100, 500], 'epique': [500, 1000, 5000]}[coin_tier]
+            num_gems = random.randint(1, 4)
+            for _ in range(num_gems):
+                value = random.choice(gem_values)
+                gem = random.choice(cls.GEMS[value])
+                result['gems'].append(f"{gem} ({value} po)")
+        
+        # Objets d'art
+        art_chance = {'faible': 0.1, 'moyen': 0.3, 'eleve': 0.5, 'epique': 0.7}[coin_tier]
+        if random.random() < art_chance:
+            art_values = {'faible': [25], 'moyen': [25, 250], 
+                         'eleve': [250, 750], 'epique': [750, 2500, 7500]}[coin_tier]
+            num_art = random.randint(1, 2)
+            for _ in range(num_art):
+                value = random.choice(art_values)
+                art = random.choice(cls.ART_OBJECTS[value])
+                result['art'].append(f"{art} ({value} po)")
+        
+        # Items magiques
+        if include_magic:
+            magic_chance = {'faible': 0.15, 'moyen': 0.35, 'eleve': 0.55, 'epique': 0.75}[coin_tier]
+            if random.random() < magic_chance:
+                rarities = {
+                    'faible': ['commun', 'peu commun'],
+                    'moyen': ['peu commun', 'rare'],
+                    'eleve': ['rare', 'tres rare'],
+                    'epique': ['tres rare', 'legendaire']
+                }[coin_tier]
+                
+                num_items = random.randint(1, 2)
+                for _ in range(num_items):
+                    rarity = random.choice(rarities)
+                    item = random.choice(cls.MAGIC_ITEMS[rarity])
+                    result['magic_items'].append(f"{item} ({rarity})")
+        
+        return result
+    
+    @classmethod
+    def format_treasure(cls, treasure: dict) -> str:
+        """Formate le tresor pour l'affichage"""
+        lines = ["=" * 40, "TRESOR GENERE", "=" * 40, ""]
+        
+        # Pieces
+        if treasure['coins']:
+            lines.append("PIECES:")
+            coin_names = {'cp': 'cuivre', 'sp': 'argent', 'gp': 'or', 'pp': 'platine'}
+            for coin, amount in treasure['coins'].items():
+                lines.append(f"  {amount} pieces de {coin_names[coin]}")
+            lines.append("")
+        
+        # Gemmes
+        if treasure['gems']:
+            lines.append("GEMMES:")
+            for gem in treasure['gems']:
+                lines.append(f"  {gem}")
+            lines.append("")
+        
+        # Objets d'art
+        if treasure['art']:
+            lines.append("OBJETS D'ART:")
+            for art in treasure['art']:
+                lines.append(f"  {art}")
+            lines.append("")
+        
+        # Items magiques
+        if treasure['magic_items']:
+            lines.append("ITEMS MAGIQUES:")
+            for item in treasure['magic_items']:
+                lines.append(f"  {item}")
+            lines.append("")
+        
+        # Total approximatif
+        total = 0
+        coin_values = {'cp': 0.01, 'sp': 0.1, 'gp': 1, 'pp': 10}
+        for coin, amount in treasure['coins'].items():
+            total += amount * coin_values[coin]
+        
+        lines.append("-" * 40)
+        lines.append(f"Valeur pieces: ~{int(total)} po")
+        
+        return "\n".join(lines)
+
 
 class InitiativeTracker:
-    """
-    Gere l'ordre d'initiative pendant les combats
+    """Gestionnaire d'initiative pour les combats"""
     
-    Attributs:
-        creatures (list): Liste des creatures en combat avec leur initiative
-        current_index (int): Index de la creature dont c'est le tour
-        round_number (int): Numero du round actuel
-    """
     def __init__(self):
-        self.creatures = []  # Liste vide au debut
-        self.current_index = 0  # Commence au premier
-        self.round_number = 1  # Round 1 au debut
+        self.creatures = []
+        self.current_index = 0
+        self.round_number = 1
     
-    def add(self, name, init):
-        """
-        Ajoute une creature au tracker d'initiative
-        
-        Args:
-            name (str): Nom de la creature
-            init (int): Valeur d'initiative (0-40)
-            
-        Returns:
-            bool: True si ajoute avec succes, False si initiative invalide
-        """
-        # Valider que l'initiative est entre 0 et 40
-        if 0 <= init <= 40:
-            # Ajouter la creature a la liste
-            self.creatures.append({'name': name, 'initiative': init})
-            # Trier par initiative decroissante (plus haute initiative en premier)
+    def add(self, name: str, init: int) -> bool:
+        if 0 <= init <= 40 and name.strip():
+            self.creatures.append({'name': name.strip(), 'initiative': init})
             self.creatures.sort(key=lambda x: x['initiative'], reverse=True)
             return True
         return False
     
+    def remove(self, index: int) -> bool:
+        if 0 <= index < len(self.creatures):
+            self.creatures.pop(index)
+            if self.current_index >= len(self.creatures):
+                self.current_index = max(0, len(self.creatures) - 1)
+            return True
+        return False
+    
     def next_turn(self):
-        """
-        Passe au tour suivant dans l'ordre d'initiative
-        Incremente le numero de round quand on revient au debut
-        """
         if self.creatures:
-            # Passer a la creature suivante (modulo pour boucler)
             self.current_index = (self.current_index + 1) % len(self.creatures)
-            # Si on revient au debut, incrementer le round
             if self.current_index == 0:
                 self.round_number += 1
     
+    def prev_turn(self):
+        if self.creatures:
+            if self.current_index == 0 and self.round_number > 1:
+                self.round_number -= 1
+                self.current_index = len(self.creatures) - 1
+            elif self.current_index > 0:
+                self.current_index -= 1
+    
     def get_current(self):
-        """Retourne la creature dont c'est actuellement le tour"""
         return self.creatures[self.current_index] if self.creatures else None
     
     def clear(self):
-        """Reinitialise completement le tracker"""
-        self.creatures, self.current_index, self.round_number = [], 0, 1
-    
-    def to_dict(self):
-        """Convertit l'etat en dictionnaire pour sauvegarde"""
-        return {'creatures': self.creatures, 'current': self.current_index, 'round': self.round_number}
-    
-    def from_dict(self, data):
-        """Restaure l'etat depuis un dictionnaire"""
-        self.creatures = data.get('creatures', [])
-        self.current_index = data.get('current', 0)
-        self.round_number = data.get('round', 1)
+        self.creatures = []
+        self.current_index = 0
+        self.round_number = 1
 
-
-class DungeonGenerator:
-    """
-    Generateur de donjons qui utilise l'IA pour creer des descriptions
-    
-    Note: La generation reelle est faite par l'IA via le chat.
-    Cette classe prepare juste les parametres.
-    """
-    THEMES = ['undead', 'goblin', 'dragon', 'elemental', 'construct']
-    
-    def __init__(self, model=None):
-        self.model = model  # Reference au modele LLM (optionnel)
-    
-    def generate(self, rooms=10, difficulty='medium', theme='undead'):
-        """
-        Prepare les parametres pour la generation par IA
-        
-        Args:
-            rooms (int): Nombre de salles desirees
-            difficulty (str): Niveau de difficulte
-            theme (str): Theme du donjon
-            
-        Returns:
-            dict: Parametres du donjon (sera traite par l'IA)
-        """
-        return {
-            'name': f"The {theme.title()} Lair",
-            'difficulty': difficulty,
-            'theme': theme,
-            'rooms': rooms,
-            'status': 'use_ai'  # Indique que l'IA doit generer
-        }
-
-
-class SessionManager:
-    """
-    Gere la sauvegarde et le chargement des sessions de jeu
-    Sauvegarde en format JSON dans data/sessions/
-    """
-    def __init__(self, dir="data/sessions"):
-        self.dir = Path(dir)
-        # Creer le dossier s'il n'existe pas
-        self.dir.mkdir(parents=True, exist_ok=True)
-    
-    def save(self, data):
-        """
-        Sauvegarde une session au format JSON
-        
-        Args:
-            data (dict): Donnees a sauvegarder (chat, initiative, donjon, etc.)
-            
-        Returns:
-            str: Chemin du fichier sauvegarde
-        """
-        # Nom de fichier avec timestamp
-        file = self.dir / f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        # Ajouter le timestamp aux donnees
-        data['timestamp'] = datetime.now().isoformat()
-        # Ecrire en JSON avec indentation pour lisibilite
-        with open(file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        return str(file)
-    
-    def load(self, path):
-        """
-        Charge une session depuis un fichier JSON
-        
-        Args:
-            path (str): Chemin du fichier a charger
-            
-        Returns:
-            dict: Donnees de la session
-        """
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-
-
-# ======================== MAIN GUI CLASS ========================
 
 class DnDAssistantGUI:
-    """
-    Classe principale de l'interface graphique
+    """Interface principale du Grimoire du Maitre du Donjon"""
     
-    Gere tous les onglets et fonctionnalites:
-    - Chat avec l'IA
-    - Recherche de monstres
-    - Recherche de regles
-    - Outils du maitre
-    - Tracker d'initiative
-    - Generateur de donjons
-    
-    Attributs:
-        root: Fenetre principale CustomTkinter
-        model: Interface avec le modele LLM
-        rag: Systeme de recherche RAG
-        monster_db: Base de donnees des monstres
-        init_tracker: Tracker d'initiative
-        dungeon_gen: Generateur de donjons
-        session_mgr: Gestionnaire de sessions
-        chat_history: Historique des messages du chat
-        colors: Palette de couleurs du theme
-    """
     def __init__(self):
-        # Initialisation des composants backend
-        self.model = None  # Sera initialise plus tard
+        self.model = None
         self.rag = None
         self.monster_db = None
+        self.spell_db = None
+        self.item_db = None
         self.init_tracker = InitiativeTracker()
-        self.dungeon_gen = DungeonGenerator()
-        self.session_mgr = SessionManager()
-        self.chat_history = []  # Historique vide au debut
-        self.current_dungeon = None  # Pas de donjon au debut
+        self.chat_history = []
         
-        # Configuration et creation de l'interface
+        # Caches pour l'auto-completion
+        self.monster_names = []
+        self.spell_names = []
+        self.item_names = []
+        self.rule_keywords = [
+            "combat", "attaque", "action", "mouvement", "initiative", "round",
+            "repos court", "repos long", "concentration", "avantage", "desavantage",
+            "sauvegarde", "jet", "competence", "classe armure", "couverture",
+            "attaque opportunite", "condition", "aveugle", "charme", "effraye",
+            "paralyse", "empoisonne", "prone", "etourdi", "inconscient",
+            "magie", "sort", "cantrip", "emplacement", "composante", "rituel",
+            "degats", "resistance", "immunite", "vulnerabilite",
+            "force", "dexterite", "constitution", "intelligence", "sagesse", "charisme",
+            "multiclasse", "niveau", "experience", "alignement", "langue",
+            "equipement", "arme", "armure", "bouclier", "lumiere", "vision",
+            "terrain difficile", "saut", "escalade", "nage"
+        ]
+        
         self.setup_window()
-        self.create_widgets()
-        
-        # Initialiser les systemes backend apres 100ms (pour que la GUI soit prete)
+        self.create_layout()
         self.root.after(100, self.initialize_systems)
     
     def setup_window(self):
-        """
-        Configure la fenetre principale
-        Definit les couleurs du theme et les parametres de base
-        """
-        ctk.set_appearance_mode("dark")  # Mode sombre
+        ctk.set_appearance_mode("dark")
         self.root = ctk.CTk()
         self.root.title("Le Grimoire du Maitre du Donjon")
-        self.root.geometry("1400x900")  # Taille de la fenetre
+        self.root.geometry("1500x950")
+        self.root.minsize(1300, 800)
         
-        # Palette de couleurs retro 8-bit
         self.colors = {
-            'bg_dark': '#1a0a00',    # Fond tres sombre (noir-brun)
-            'bg_med': '#2d1810',     # Fond moyen (brun sombre)
-            'bg_light': '#4a2511',   # Fond clair (brun)
-            'orange': '#FF8C00',     # Orange vif (boutons) 
+            'bg_dark': '#1a0a00',
+            'bg_med': '#2d1810',
+            'bg_light': '#4a2511',
+            'orange': '#FF8C00',
             'red': '#8B0000',
-            'text': '#FFB366', 
-            'gold': '#DAA520'  # Goldenrod - couleur or
+            'text': '#FFB366',
+            'gold': '#DAA520',
+            'text_dim': '#996633'
         }
         self.root.configure(fg_color=self.colors['bg_dark'])
     
-    def create_widgets(self):
-        # Header
-        hdr = ctk.CTkFrame(self.root, fg_color=self.colors['red'], height=70)
-        hdr.pack(fill="x")
-        ctk.CTkLabel(hdr, text="LE GRIMOIRE DU MAITRE DU DONJON", font=("Courier", 26, "bold"),
-                    text_color=self.colors['gold']).pack(pady=5)
-        ctk.CTkLabel(hdr, text="Assistant IA pour D&D 5e", font=("Courier", 9),
-                    text_color=self.colors['orange']).pack()
+    def create_layout(self):
+        self._create_header()
         
-        # Toolbar
-        toolbar = ctk.CTkFrame(self.root, fg_color=self.colors['bg_med'], height=45)
-        toolbar.pack(fill="x", padx=5, pady=2)
+        main_container = ctk.CTkFrame(self.root, fg_color=self.colors['bg_dark'])
+        main_container.pack(fill="both", expand=True, padx=5, pady=5)
         
-        self.status = ctk.CTkLabel(toolbar, text="Initialisation...", font=("Courier", 9),
-                                  text_color=self.colors['orange'])
-        self.status.pack(side="right", padx=10)
+        self.main_panel = ctk.CTkFrame(main_container, fg_color=self.colors['bg_dark'])
+        self.main_panel.pack(side="left", fill="both", expand=True)
         
-        # Tabs
+        self.side_panel = ctk.CTkFrame(main_container, fg_color=self.colors['bg_med'], width=280)
+        self.side_panel.pack(side="right", fill="y", padx=(5, 0))
+        self.side_panel.pack_propagate(False)
+        
+        self._create_tabs()
+        self._create_initiative_panel()
+        self._create_footer()
+    
+    def _create_header(self):
+        header = ctk.CTkFrame(self.root, fg_color=self.colors['red'], height=55)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        
+        ctk.CTkLabel(
+            header,
+            text="LE GRIMOIRE DU MAITRE DU DONJON",
+            font=("Courier", 22, "bold"),
+            text_color=self.colors['gold']
+        ).pack(pady=(8, 0))
+        
+        self.status = ctk.CTkLabel(
+            header,
+            text="Initialisation...",
+            font=("Courier", 9),
+            text_color=self.colors['orange']
+        )
+        self.status.pack()
+    
+    def _create_tabs(self):
         self.tabs = ctk.CTkTabview(
-            self.root, 
+            self.main_panel,
             fg_color=self.colors['bg_dark'],
             segmented_button_fg_color=self.colors['bg_med'],
             segmented_button_selected_color=self.colors['orange'],
             segmented_button_selected_hover_color=self.colors['orange'],
+            segmented_button_unselected_color=self.colors['bg_med'],
             text_color=self.colors['text']
         )
-        self.tabs.pack(fill="both", expand=True, padx=10, pady=5)
+        self.tabs.pack(fill="both", expand=True, padx=5, pady=5)
         
         self.tab_chat = self.tabs.add("Chat")
-        self.tab_monsters = self.tabs.add("Monstres")
-        self.tab_rules = self.tabs.add("Regles")
-        self.tab_tools = self.tabs.add("Outils")
-        self.tab_init = self.tabs.add("Initiative")
-        self.tab_dung = self.tabs.add("Donjon")
+        self.tab_npc = self.tabs.add("PNJ")
+        self.tab_monster = self.tabs.add("Monstre")
+        self.tab_building = self.tabs.add("Batiment")
+        self.tab_magic_item = self.tabs.add("Item Magique")
+        self.tab_spell = self.tabs.add("Sort")
+        self.tab_rules = self.tabs.add("Regle")
+        self.tab_tools = self.tabs.add("Outil")
         
-        self.setup_chat()
-        self.setup_monsters()
-        self.setup_rules()
-        self.setup_tools()
-        self.setup_initiative()
-        self.setup_dungeon()
-        
-        # Footer
-        ftr = ctk.CTkFrame(self.root, fg_color=self.colors['red'], height=25)
-        ftr.pack(fill="x")
-        ctk.CTkLabel(ftr, text="Powered by LM Studio & Ollama", font=("Courier", 8, "bold"),
-                    text_color=self.colors['gold']).pack(pady=3)
+        self._setup_chat_tab()
+        self._setup_npc_tab()
+        self._setup_monster_tab()
+        self._setup_building_tab()
+        self._setup_magic_item_tab()
+        self._setup_spell_tab()
+        self._setup_rules_tab()
+        self._setup_tools_tab()
     
-    def setup_chat(self):
+    def _setup_chat_tab(self):
         self.chat_box = ctk.CTkTextbox(
-            self.tab_chat, 
+            self.tab_chat,
             font=("Courier", 11),
-            fg_color=self.colors['bg_light'], 
+            fg_color=self.colors['bg_light'],
             text_color=self.colors['text'],
             wrap="word"
         )
-        self.chat_box.pack(fill="both", expand=True, padx=10, pady=10)
-        self.chat_box.insert("end", "Bienvenue, Maitre du Donjon!\n\nPose tes questions sur D&D 5e.\n\n")
+        self.chat_box.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+        self.chat_box.insert("end", "Bienvenue, Maitre du Donjon.\n\nPose tes questions sur D&D 5e.\n\n")
         
-        inp_frame = ctk.CTkFrame(self.tab_chat, fg_color=self.colors['bg_med'])
-        inp_frame.pack(fill="x", padx=10, pady=5)
+        input_frame = ctk.CTkFrame(self.tab_chat, fg_color=self.colors['bg_med'])
+        input_frame.pack(fill="x", padx=10, pady=10)
         
         self.chat_input = ctk.CTkEntry(
-            inp_frame, 
-            fg_color=self.colors['bg_light'], 
-            text_color=self.colors['text'], 
-            height=35
+            input_frame,
+            font=("Courier", 12),
+            fg_color=self.colors['bg_light'],
+            text_color=self.colors['text'],
+            placeholder_text="Pose ta question...",
+            height=40
         )
-        self.chat_input.pack(side="left", fill="x", expand=True, padx=5)
-        self.chat_input.bind("<Return>", lambda e: self.send_msg())
+        self.chat_input.pack(side="left", fill="x", expand=True, padx=(5, 10), pady=5)
+        self.chat_input.bind("<Return>", lambda e: self.send_message())
         
-        self.create_button(inp_frame, "ENVOYER", self.send_msg, 100).pack(side="right", padx=5)
-        
-        # Quick actions
-        actions_frame = ctk.CTkFrame(self.tab_chat, fg_color=self.colors['bg_med'])
-        actions_frame.pack(fill="x", padx=10, pady=5)
-        
-        self.create_button(actions_frame, "Lancer Des", 
-                self.dice_roller_prompt, 130).pack(side="left", padx=3, pady=5)
-        self.create_button(actions_frame, "Generer Rencontre", 
-                self.encounter_generator_prompt, 180).pack(side="left", padx=3, pady=5)
-        self.create_button(actions_frame, "Creer PNJ", 
-                self.npc_generator_prompt, 130).pack(side="left", padx=3, pady=5)
-        self.create_button(actions_frame, "Aide Combat", 
-                lambda: self.quick_action("Explique les regles de combat"), 140).pack(side="left", padx=3, pady=5)
+        self._create_button(input_frame, "Envoyer", self.send_message, 100).pack(side="right", padx=5, pady=5)
     
-    def setup_monsters(self):
-        search_frame = ctk.CTkFrame(self.tab_monsters, fg_color=self.colors['bg_med'])
+    def _setup_npc_tab(self):
+        header = ctk.CTkFrame(self.tab_npc, fg_color=self.colors['bg_med'])
+        header.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(header, text="GENERATEUR DE PNJ", font=("Courier", 16, "bold"),
+                    text_color=self.colors['gold']).pack(pady=10)
+        
+        options_frame = ctk.CTkFrame(header, fg_color="transparent")
+        options_frame.pack(pady=10)
+        
+        ctk.CTkLabel(options_frame, text="Type:", text_color=self.colors['text']).grid(row=0, column=0, padx=5, pady=5)
+        self.npc_type = ctk.CTkOptionMenu(
+            options_frame,
+            values=["Marchand", "Noble", "Guerrier", "Mage", "Voleur", "Pretre", 
+                    "Aubergiste", "Forgeron", "Garde", "Paysan", "Mendiant", "Sage", 
+                    "Assassin", "Barde", "Druide", "Pirate", "Chasseur", "Artisan"],
+            fg_color=self.colors['orange'], button_color=self.colors['orange'],
+            button_hover_color=self.colors['red'], width=140
+        )
+        self.npc_type.set("Marchand")
+        self.npc_type.grid(row=0, column=1, padx=5, pady=5)
+        
+        ctk.CTkLabel(options_frame, text="Race:", text_color=self.colors['text']).grid(row=0, column=2, padx=5, pady=5)
+        self.npc_race = ctk.CTkOptionMenu(
+            options_frame,
+            values=["Humain", "Elfe", "Nain", "Halfelin", "Demi-Elfe", "Demi-Orc", 
+                    "Gnome", "Tiefling", "Dragonborn", "Aleatoire"],
+            fg_color=self.colors['orange'], button_color=self.colors['orange'],
+            button_hover_color=self.colors['red'], width=120
+        )
+        self.npc_race.set("Aleatoire")
+        self.npc_race.grid(row=0, column=3, padx=5, pady=5)
+        
+        ctk.CTkLabel(options_frame, text="Alignement:", text_color=self.colors['text']).grid(row=1, column=0, padx=5, pady=5)
+        self.npc_align = ctk.CTkOptionMenu(
+            options_frame,
+            values=["Loyal Bon", "Neutre Bon", "Chaotique Bon", "Loyal Neutre", 
+                    "Neutre", "Chaotique Neutre", "Loyal Mauvais", "Neutre Mauvais", 
+                    "Chaotique Mauvais", "Aleatoire"],
+            fg_color=self.colors['orange'], button_color=self.colors['orange'],
+            button_hover_color=self.colors['red'], width=140
+        )
+        self.npc_align.set("Aleatoire")
+        self.npc_align.grid(row=1, column=1, padx=5, pady=5)
+        
+        self.npc_quest = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(options_frame, text="Avec quete", variable=self.npc_quest,
+                       fg_color=self.colors['orange'], hover_color=self.colors['red'],
+                       text_color=self.colors['text']).grid(row=1, column=2, columnspan=2, padx=5, pady=5)
+        
+        self._create_button(header, "Generer PNJ", self.generate_npc, 150).pack(pady=10)
+        
+        self.npc_display = ctk.CTkTextbox(self.tab_npc, font=("Courier", 11),
+                                          fg_color=self.colors['bg_light'], text_color=self.colors['text'])
+        self.npc_display.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+    
+    def _setup_monster_tab(self):
+        search_frame = ctk.CTkFrame(self.tab_monster, fg_color=self.colors['bg_med'])
         search_frame.pack(fill="x", padx=10, pady=10)
         
-        ctk.CTkLabel(
-            search_frame, 
-            text="BESTIAIRE", 
-            font=("Courier", 18, "bold"),
-            text_color=self.colors['gold']
-        ).pack(pady=5)
+        ctk.CTkLabel(search_frame, text="BESTIAIRE", font=("Courier", 16, "bold"),
+                    text_color=self.colors['gold']).pack(pady=5)
         
-        search_input_frame = ctk.CTkFrame(search_frame, fg_color="transparent")
-        search_input_frame.pack(fill="x", padx=5, pady=5)
+        input_row = ctk.CTkFrame(search_frame, fg_color="transparent")
+        input_row.pack(fill="x", padx=10, pady=5)
         
-        self.monster_search = ctk.CTkEntry(
-            search_input_frame, 
-            placeholder_text="Chercher monstre...",
-            font=("Courier", 12), 
-            fg_color=self.colors['bg_light'], 
-            text_color=self.colors['text']
+        # Auto-completion pour monstres
+        self.monster_search = AutocompleteEntry(
+            input_row,
+            suggestions_source=self._get_monster_suggestions,
+            placeholder="Nom du monstre...",
+            colors=self.colors,
+            on_select=self.search_monster
         )
-        self.monster_search.pack(side="left", fill="x", expand=True, padx=5)
+        self.monster_search.pack(side="left", fill="x", expand=True, padx=(0, 10))
         
-        self.create_button(search_input_frame, "CHERCHER", self.search_monster, 120).pack(side="right", padx=5)
+        self._create_button(input_row, "Chercher", self.search_monster, 100).pack(side="right")
         
-        self.monster_display = ctk.CTkTextbox(
-            self.tab_monsters, 
-            font=("Courier", 11),
-            fg_color=self.colors['bg_light'], 
-            text_color=self.colors['text']
-        )
-        self.monster_display.pack(fill="both", expand=True, padx=10, pady=10)
+        self.monster_display = ctk.CTkTextbox(self.tab_monster, font=("Courier", 11),
+                                              fg_color=self.colors['bg_light'], text_color=self.colors['text'])
+        self.monster_display.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.monster_display.insert("end", "Recherche un monstre par son nom.\nCommence a taper pour voir les suggestions.\n\nExemples: Goblin, Dragon, Beholder...")
     
-    def setup_rules(self):
+    def _setup_building_tab(self):
+        header = ctk.CTkFrame(self.tab_building, fg_color=self.colors['bg_med'])
+        header.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(header, text="GENERATEUR DE BATIMENTS", font=("Courier", 16, "bold"),
+                    text_color=self.colors['gold']).pack(pady=10)
+        
+        options_frame = ctk.CTkFrame(header, fg_color="transparent")
+        options_frame.pack(pady=10)
+        
+        ctk.CTkLabel(options_frame, text="Type:", text_color=self.colors['text']).grid(row=0, column=0, padx=5, pady=5)
+        self.building_type = ctk.CTkOptionMenu(
+            options_frame,
+            values=["Taverne", "Forge", "Temple", "Bibliotheque", "Chateau", "Tour de mage",
+                    "Prison", "Guildes", "Marche", "Manoir", "Ruines", "Donjon",
+                    "Auberge", "Echoppe", "Caserne", "Cimetiere"],
+            fg_color=self.colors['orange'], button_color=self.colors['orange'],
+            button_hover_color=self.colors['red'], width=150
+        )
+        self.building_type.set("Taverne")
+        self.building_type.grid(row=0, column=1, padx=5, pady=5)
+        
+        ctk.CTkLabel(options_frame, text="Etat:", text_color=self.colors['text']).grid(row=0, column=2, padx=5, pady=5)
+        self.building_state = ctk.CTkOptionMenu(
+            options_frame,
+            values=["Neuf", "Bon etat", "Use", "Delabre", "Ruine", "Hante"],
+            fg_color=self.colors['orange'], button_color=self.colors['orange'],
+            button_hover_color=self.colors['red'], width=120
+        )
+        self.building_state.set("Bon etat")
+        self.building_state.grid(row=0, column=3, padx=5, pady=5)
+        
+        ctk.CTkLabel(options_frame, text="Ambiance:", text_color=self.colors['text']).grid(row=1, column=0, padx=5, pady=5)
+        self.building_mood = ctk.CTkOptionMenu(
+            options_frame,
+            values=["Accueillante", "Mysterieuse", "Sinistre", "Animee", "Calme", "Luxueuse", "Pauvre"],
+            fg_color=self.colors['orange'], button_color=self.colors['orange'],
+            button_hover_color=self.colors['red'], width=150
+        )
+        self.building_mood.set("Accueillante")
+        self.building_mood.grid(row=1, column=1, padx=5, pady=5)
+        
+        self.building_secret = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(options_frame, text="Avec secret cache", variable=self.building_secret,
+                       fg_color=self.colors['orange'], hover_color=self.colors['red'],
+                       text_color=self.colors['text']).grid(row=1, column=2, columnspan=2, padx=5, pady=5)
+        
+        self._create_button(header, "Generer Batiment", self.generate_building, 160).pack(pady=10)
+        
+        self.building_display = ctk.CTkTextbox(self.tab_building, font=("Courier", 11),
+                                               fg_color=self.colors['bg_light'], text_color=self.colors['text'])
+        self.building_display.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+    
+    def _setup_magic_item_tab(self):
+        header = ctk.CTkFrame(self.tab_magic_item, fg_color=self.colors['bg_med'])
+        header.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(header, text="ITEMS MAGIQUES", font=("Courier", 16, "bold"),
+                    text_color=self.colors['gold']).pack(pady=5)
+        
+        search_row = ctk.CTkFrame(header, fg_color="transparent")
+        search_row.pack(fill="x", padx=10, pady=5)
+        
+        # Auto-completion pour items
+        self.item_search = AutocompleteEntry(
+            search_row,
+            suggestions_source=self._get_item_suggestions,
+            placeholder="Rechercher un item...",
+            colors=self.colors,
+            on_select=self.search_item
+        )
+        self.item_search.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        self._create_button(search_row, "Chercher", self.search_item, 100).pack(side="right", padx=5)
+        self._create_button(search_row, "Generer", self.generate_magic_item, 100).pack(side="right")
+        
+        gen_frame = ctk.CTkFrame(header, fg_color="transparent")
+        gen_frame.pack(pady=5)
+        
+        ctk.CTkLabel(gen_frame, text="Rarete:", text_color=self.colors['text']).pack(side="left", padx=5)
+        self.item_rarity = ctk.CTkOptionMenu(
+            gen_frame, values=["Uncommon", "Rare", "Very Rare", "Legendary", "Aleatoire"],
+            fg_color=self.colors['orange'], button_color=self.colors['orange'],
+            button_hover_color=self.colors['red'], width=120
+        )
+        self.item_rarity.set("Aleatoire")
+        self.item_rarity.pack(side="left", padx=5)
+        
+        ctk.CTkLabel(gen_frame, text="Type:", text_color=self.colors['text']).pack(side="left", padx=5)
+        self.item_type = ctk.CTkOptionMenu(
+            gen_frame, values=["Arme", "Armure", "Anneau", "Baguette", "Potion", "Parchemin", "Amulette", "Aleatoire"],
+            fg_color=self.colors['orange'], button_color=self.colors['orange'],
+            button_hover_color=self.colors['red'], width=120
+        )
+        self.item_type.set("Aleatoire")
+        self.item_type.pack(side="left", padx=5)
+        
+        self.item_display = ctk.CTkTextbox(self.tab_magic_item, font=("Courier", 11),
+                                           fg_color=self.colors['bg_light'], text_color=self.colors['text'])
+        self.item_display.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+    
+    def _setup_spell_tab(self):
+        header = ctk.CTkFrame(self.tab_spell, fg_color=self.colors['bg_med'])
+        header.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(header, text="GRIMOIRE DES SORTS", font=("Courier", 16, "bold"),
+                    text_color=self.colors['gold']).pack(pady=5)
+        
+        search_row = ctk.CTkFrame(header, fg_color="transparent")
+        search_row.pack(fill="x", padx=10, pady=5)
+        
+        # Auto-completion pour sorts
+        self.spell_search = AutocompleteEntry(
+            search_row,
+            suggestions_source=self._get_spell_suggestions,
+            placeholder="Nom du sort...",
+            colors=self.colors,
+            on_select=self.search_spell
+        )
+        self.spell_search.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        self._create_button(search_row, "Chercher", self.search_spell, 100).pack(side="right")
+        
+        filter_frame = ctk.CTkFrame(header, fg_color="transparent")
+        filter_frame.pack(pady=5)
+        
+        ctk.CTkLabel(filter_frame, text="Niveau:", text_color=self.colors['text']).pack(side="left", padx=5)
+        self.spell_level = ctk.CTkOptionMenu(
+            filter_frame, values=["Tous", "Cantrip", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+            fg_color=self.colors['orange'], button_color=self.colors['orange'],
+            button_hover_color=self.colors['red'], width=100
+        )
+        self.spell_level.set("Tous")
+        self.spell_level.pack(side="left", padx=5)
+        
+        ctk.CTkLabel(filter_frame, text="Classe:", text_color=self.colors['text']).pack(side="left", padx=5)
+        self.spell_class = ctk.CTkOptionMenu(
+            filter_frame, values=["Toutes", "Wizard", "Cleric", "Druid", "Bard", "Sorcerer", "Warlock", "Paladin", "Ranger"],
+            fg_color=self.colors['orange'], button_color=self.colors['orange'],
+            button_hover_color=self.colors['red'], width=100
+        )
+        self.spell_class.set("Toutes")
+        self.spell_class.pack(side="left", padx=5)
+        
+        self.spell_display = ctk.CTkTextbox(self.tab_spell, font=("Courier", 11),
+                                            fg_color=self.colors['bg_light'], text_color=self.colors['text'])
+        self.spell_display.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.spell_display.insert("end", "Recherche un sort par son nom.\nCommence a taper pour voir les suggestions.\n\nExemples: Fireball, Magic Missile, Cure Wounds...")
+    
+    def _setup_rules_tab(self):
         search_frame = ctk.CTkFrame(self.tab_rules, fg_color=self.colors['bg_med'])
         search_frame.pack(fill="x", padx=10, pady=10)
         
-        ctk.CTkLabel(
-            search_frame, 
-            text="REGLES D&D 5e", 
-            font=("Courier", 18, "bold"),
-            text_color=self.colors['gold']
-        ).pack(pady=5)
+        ctk.CTkLabel(search_frame, text="REGLES D&D 5e", font=("Courier", 16, "bold"),
+                    text_color=self.colors['gold']).pack(pady=5)
         
-        search_input_frame = ctk.CTkFrame(search_frame, fg_color="transparent")
-        search_input_frame.pack(fill="x", padx=5, pady=5)
+        input_row = ctk.CTkFrame(search_frame, fg_color="transparent")
+        input_row.pack(fill="x", padx=10, pady=5)
         
-        self.rule_search = ctk.CTkEntry(
-            search_input_frame, 
-            placeholder_text="Chercher regle...",
-            font=("Courier", 12), 
-            fg_color=self.colors['bg_light'], 
-            text_color=self.colors['text']
+        # Auto-completion pour regles
+        self.rule_search = AutocompleteEntry(
+            input_row,
+            suggestions_source=self._get_rule_suggestions,
+            placeholder="Rechercher une regle...",
+            colors=self.colors,
+            on_select=self.search_rules
         )
-        self.rule_search.pack(side="left", fill="x", expand=True, padx=5)
+        self.rule_search.pack(side="left", fill="x", expand=True, padx=(0, 10))
         
-        self.create_button(search_input_frame, "CHERCHER", self.search_rules, 120).pack(side="right", padx=5)
+        self._create_button(input_row, "Chercher", self.search_rules, 100).pack(side="right")
         
-        self.rules_display = ctk.CTkTextbox(
-            self.tab_rules, 
-            font=("Courier", 11),
-            fg_color=self.colors['bg_light'], 
-            text_color=self.colors['text']
+        self.rules_display = ctk.CTkTextbox(self.tab_rules, font=("Courier", 11),
+                                            fg_color=self.colors['bg_light'], text_color=self.colors['text'])
+        self.rules_display.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.rules_display.insert("end", "Recherche dans les regles officielles.\nCommence a taper pour voir les suggestions.\n\nExemples: combat, magie, repos, concentration...")
+    
+    def _setup_tools_tab(self):
+        # Frame principale avec scroll
+        tools_scroll = ctk.CTkScrollableFrame(self.tab_tools, fg_color=self.colors['bg_dark'])
+        tools_scroll.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # ========== GENERATEUR DE NOMS ==========
+        names_frame = ctk.CTkFrame(tools_scroll, fg_color=self.colors['bg_med'])
+        names_frame.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(names_frame, text="GENERATEUR DE NOMS", font=("Courier", 14, "bold"),
+                    text_color=self.colors['gold']).pack(pady=8)
+        
+        name_options = ctk.CTkFrame(names_frame, fg_color="transparent")
+        name_options.pack(pady=5)
+        
+        ctk.CTkLabel(name_options, text="Type:", text_color=self.colors['text']).pack(side="left", padx=5)
+        self.name_type = ctk.CTkOptionMenu(
+            name_options,
+            values=[
+                "Humain (M)", "Humain (F)", "Elfe (M)", "Elfe (F)", 
+                "Nain (M)", "Nain (F)", "Halfelin (M)", "Halfelin (F)",
+                "Orc", "Tiefling (M)", "Tiefling (F)", "Noble",
+                "Taverne", "Boutique (Forge)", "Boutique (Magie)", "Boutique (General)",
+                "Lieu/Ville", "Guilde", "Navire", "Sort", "Familier", "Demon/Diable", "Dragon"
+            ],
+            fg_color=self.colors['orange'], button_color=self.colors['orange'],
+            button_hover_color=self.colors['red'], width=180
         )
-        self.rules_display.pack(fill="both", expand=True, padx=10, pady=10)
-    
-    def setup_tools(self):
-        tools_frame = ctk.CTkFrame(self.tab_tools, fg_color=self.colors['bg_med'])
-        tools_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.name_type.set("Humain (M)")
+        self.name_type.pack(side="left", padx=5)
         
-        ctk.CTkLabel(
-            tools_frame, 
-            text="OUTILS DU MAITRE", 
-            font=("Courier", 18, "bold"),
-            text_color=self.colors['gold']
-        ).pack(pady=10)
+        self._create_button(name_options, "Generer", self.generate_name, 100).pack(side="left", padx=10)
         
-        tools = [
-            ("Lanceur de Des", self.dice_roller),
-            ("Generateur Rencontre", self.encounter_generator),
-            ("Generateur PNJ", self.npc_generator),
-            ("Generateur Donjon", self.dungeon_generator_tool),
-            ("Calculateur XP", self.xp_calculator),
-            ("Tracker Initiative", self.initiative_tracker_tool)
-        ]
+        self.name_result = ctk.CTkLabel(names_frame, text="", font=("Courier", 16, "bold"),
+                                        text_color=self.colors['orange'])
+        self.name_result.pack(pady=10)
         
-        for text, command in tools:
-            self.create_button(tools_frame, text, command, 300, 50).pack(pady=5)
-    
-    def setup_initiative(self):
-        form = ctk.CTkFrame(self.tab_init, fg_color=self.colors['bg_med'])
-        form.pack(fill="x", padx=10, pady=10)
+        # Historique des noms
+        self.name_history = ctk.CTkTextbox(names_frame, font=("Courier", 10),
+                                           fg_color=self.colors['bg_light'], text_color=self.colors['text'],
+                                           height=120)
+        self.name_history.pack(fill="x", padx=10, pady=(0, 10))
+        self.name_history.insert("end", "Historique des noms generes:\n" + "-"*40 + "\n")
         
-        ctk.CTkLabel(
-            form, 
-            text="INITIATIVE TRACKER", 
-            font=("Courier", 16, "bold"),
-            text_color=self.colors['gold']
-        ).pack(pady=5)
+        # ========== GENERATEUR DE TRESOR ==========
+        treasure_frame = ctk.CTkFrame(tools_scroll, fg_color=self.colors['bg_med'])
+        treasure_frame.pack(fill="x", padx=10, pady=10)
         
-        ent = ctk.CTkFrame(form, fg_color="transparent")
-        ent.pack(pady=5)
+        ctk.CTkLabel(treasure_frame, text="GENERATEUR DE TRESOR", font=("Courier", 14, "bold"),
+                    text_color=self.colors['gold']).pack(pady=8)
         
-        self.i_name = self.create_entry(ent, "Nom:", 0, 0, 200)
-        self.i_init = self.create_entry(ent, "Initiative (0-40):", 0, 2, 80)
-        self.create_button(ent, "Ajouter", self.add_init, 100).grid(row=0, column=4, padx=10)
+        treasure_options = ctk.CTkFrame(treasure_frame, fg_color="transparent")
+        treasure_options.pack(pady=5)
         
-        ctrl = ctk.CTkFrame(form, fg_color="transparent")
-        ctrl.pack(pady=5)
-        self.create_button(ctrl, "Lancer Init (1d20)", self.roll_init, 150).pack(side="left", padx=3)
-        self.create_button(ctrl, "Tour Suivant", self.next_turn, 120).pack(side="left", padx=3)
-        self.create_button(ctrl, "Effacer", self.clear_init, 100).pack(side="left", padx=3)
-        
-        self.init_box = ctk.CTkTextbox(
-            self.tab_init, 
-            font=("Courier", 12),
-            fg_color=self.colors['bg_light'], 
-            text_color=self.colors['text']
+        ctk.CTkLabel(treasure_options, text="Niveau:", text_color=self.colors['text']).pack(side="left", padx=5)
+        self.treasure_level = ctk.CTkOptionMenu(
+            treasure_options,
+            values=["Faible (CR 0-4)", "Moyen (CR 5-10)", "Eleve (CR 11-16)", "Epique (CR 17+)"],
+            fg_color=self.colors['orange'], button_color=self.colors['orange'],
+            button_hover_color=self.colors['red'], width=150
         )
-        self.init_box.pack(fill="both", expand=True, padx=10, pady=10)
-        self.update_init()
+        self.treasure_level.set("Moyen (CR 5-10)")
+        self.treasure_level.pack(side="left", padx=5)
+        
+        self.treasure_magic = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(treasure_options, text="Inclure items magiques", variable=self.treasure_magic,
+                       fg_color=self.colors['orange'], hover_color=self.colors['red'],
+                       text_color=self.colors['text']).pack(side="left", padx=10)
+        
+        self._create_button(treasure_options, "Generer", self.generate_treasure, 100).pack(side="left", padx=10)
+        
+        self.treasure_display = ctk.CTkTextbox(treasure_frame, font=("Courier", 10),
+                                               fg_color=self.colors['bg_light'], text_color=self.colors['text'],
+                                               height=250)
+        self.treasure_display.pack(fill="x", padx=10, pady=(5, 10))
+        self.treasure_display.insert("end", "Generateur de tresor D&D 5e\n\nSelectionne un niveau de tresor et clique sur Generer.")
     
-    def setup_dungeon(self):
-        ctrl = ctk.CTkFrame(self.tab_dung, fg_color=self.colors['bg_med'])
-        ctrl.pack(fill="x", padx=10, pady=10)
+    def _create_initiative_panel(self):
+        ctk.CTkLabel(self.side_panel, text="INITIATIVE", font=("Courier", 14, "bold"),
+                    text_color=self.colors['gold']).pack(pady=10)
         
-        ctk.CTkLabel(
-            ctrl, 
-            text="GENERATEUR DE DONJON IA", 
-            font=("Courier", 16, "bold"),
-            text_color=self.colors['gold']
-        ).pack(pady=5)
+        add_frame = ctk.CTkFrame(self.side_panel, fg_color="transparent")
+        add_frame.pack(fill="x", padx=10)
         
-        ctk.CTkLabel(
-            ctrl,
-            text="Demande a l'IA de generer un donjon dans l'onglet Chat!",
-            font=("Courier", 10),
-            text_color=self.colors['text']
-        ).pack(pady=5)
+        self.init_name = ctk.CTkEntry(add_frame, font=("Courier", 10),
+                                      fg_color=self.colors['bg_light'], text_color=self.colors['text'],
+                                      placeholder_text="Nom", width=120, height=28)
+        self.init_name.pack(side="left", padx=(0, 3))
         
-        opts = ctk.CTkFrame(ctrl, fg_color="transparent")
-        opts.pack(pady=5)
+        self.init_value = ctk.CTkEntry(add_frame, font=("Courier", 10),
+                                       fg_color=self.colors['bg_light'], text_color=self.colors['text'],
+                                       placeholder_text="Init", width=45, height=28)
+        self.init_value.pack(side="left", padx=(0, 3))
         
-        self.d_rooms = self.create_entry(opts, "Salles:", 0, 0, 50)
-        self.d_rooms.insert(0, "5")
+        self._create_button(add_frame, "+", self.add_to_initiative, 30, 28).pack(side="left")
         
-        ctk.CTkLabel(opts, text="Difficulte:", text_color=self.colors['text']).grid(row=0, column=2, padx=5)
-        self.d_diff = ctk.CTkOptionMenu(
-            opts, 
-            values=["easy", "medium", "hard"], 
-            fg_color=self.colors['orange'], 
-            button_color=self.colors['orange'],
-            button_hover_color=self.colors['red'],
-            width=90
-        )
-        self.d_diff.set("medium")
-        self.d_diff.grid(row=0, column=3, padx=5)
+        ctrl_frame = ctk.CTkFrame(self.side_panel, fg_color="transparent")
+        ctrl_frame.pack(fill="x", padx=10, pady=8)
         
-        ctk.CTkLabel(opts, text="Theme:", text_color=self.colors['text']).grid(row=0, column=4, padx=5)
-        self.d_theme = ctk.CTkOptionMenu(
-            opts, 
-            values=DungeonGenerator.THEMES,
-            fg_color=self.colors['orange'], 
-            button_color=self.colors['orange'],
-            button_hover_color=self.colors['red'],
-            width=100
-        )
-        self.d_theme.set("undead")
-        self.d_theme.grid(row=0, column=5, padx=5)
+        self._create_button(ctrl_frame, "Prec", lambda: (self.init_tracker.prev_turn(), self.update_initiative_display()), 60, 26).pack(side="left", padx=2)
+        self._create_button(ctrl_frame, "Suiv", self.next_initiative, 60, 26).pack(side="left", padx=2)
+        self._create_button(ctrl_frame, "Clear", self.clear_initiative, 55, 26).pack(side="left", padx=2)
+        self._create_button(ctrl_frame, "d20", self.roll_all_initiative, 45, 26).pack(side="left", padx=2)
         
-        self.create_button(opts, "Demander a l'IA", self.gen_dungeon, 150).grid(row=0, column=6, padx=10)
-        
-        self.dung_box = ctk.CTkTextbox(
-            self.tab_dung, 
-            font=("Courier", 10),
-            fg_color=self.colors['bg_light'], 
-            text_color=self.colors['text']
-        )
-        self.dung_box.pack(fill="both", expand=True, padx=10, pady=10)
-        self.dung_box.insert("end", "Les donjons seront generes par l'IA.\nUtilise les parametres ci-dessus et clique sur 'Demander a l'IA'.\n\nExemple de requete:\n'Genere un donjon de 5 salles, difficulte medium, theme undead'\n")
+        self.init_display = ctk.CTkTextbox(self.side_panel, font=("Courier", 10),
+                                           fg_color=self.colors['bg_light'], text_color=self.colors['text'], width=260)
+        self.init_display.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.update_initiative_display()
     
-    def setup_sessions(self):
-        pass  # Removed
+    def _create_footer(self):
+        footer = ctk.CTkFrame(self.root, fg_color=self.colors['red'], height=22)
+        footer.pack(fill="x")
+        footer.pack_propagate(False)
+        ctk.CTkLabel(footer, text="LM Studio / Ollama", font=("Courier", 9),
+                    text_color=self.colors['gold']).pack(pady=2)
     
-    # Helper methods
-    def create_button(self, parent, text, cmd, w, h=None):
-        if h is None:
-            return ctk.CTkButton(
-                parent, text=text, command=cmd, width=w,
-                fg_color=self.colors['orange'], hover_color=self.colors['red'],
-                text_color="#000000", font=("Courier", 11, "bold"),
-                corner_radius=0, border_width=3, border_color="#8B4513"
-            )
-        else:
-            return ctk.CTkButton(
-                parent, text=text, command=cmd, width=w, height=h,
-                fg_color=self.colors['orange'], hover_color=self.colors['red'],
-                text_color="#000000", font=("Courier", 11, "bold"),
-                corner_radius=0, border_width=3, border_color="#8B4513"
-            )
+    def _create_button(self, parent, text, command, width, height=None):
+        kwargs = {
+            'master': parent, 'text': text, 'command': command, 'width': width,
+            'fg_color': self.colors['orange'], 'hover_color': self.colors['red'],
+            'text_color': "#000000", 'font': ("Courier", 10, "bold"),
+            'corner_radius': 0, 'border_width': 2, 'border_color': "#8B4513"
+        }
+        if height:
+            kwargs['height'] = height
+        return ctk.CTkButton(**kwargs)
     
-    def create_entry(self, parent, label, row, col, w):
-        ctk.CTkLabel(parent, text=label, text_color=self.colors['text']).grid(row=row, column=col, padx=5)
-        e = ctk.CTkEntry(parent, width=w, fg_color=self.colors['bg_light'], text_color=self.colors['text'])
-        e.grid(row=row, column=col+1, padx=5)
-        return e
+    # ============== Auto-completion ==============
     
-    def update_status(self, msg):
-        self.status.configure(text=msg)
-        self.root.update()
+    def _get_monster_suggestions(self, query: str) -> List[str]:
+        query = query.lower()
+        return [n for n in self.monster_names if query in n.lower()][:8]
     
-    # System initialization
+    def _get_spell_suggestions(self, query: str) -> List[str]:
+        query = query.lower()
+        return [n for n in self.spell_names if query in n.lower()][:8]
+    
+    def _get_item_suggestions(self, query: str) -> List[str]:
+        query = query.lower()
+        return [n for n in self.item_names if query in n.lower()][:8]
+    
+    def _get_rule_suggestions(self, query: str) -> List[str]:
+        query = query.lower()
+        return [k for k in self.rule_keywords if query in k.lower()][:8]
+    
+    # ============== Systeme ==============
+    
     def initialize_systems(self):
         self.update_status("Chargement...")
         try:
             self.model = DnDAssistantModel(use_ollama=False, model_name="qwen3-4b-thinking")
-            
             if not self.model.is_available():
                 self.model = DnDAssistantModel(use_ollama=True, model_name="llama2")
             
             self.rag = RAGSystem()
             self.monster_db = MonsterDatabase()
             
+            if SpellDatabase:
+                self.spell_db = SpellDatabase()
+            if ItemDatabase:
+                self.item_db = ItemDatabase()
+            
+            # Charger les noms pour l'auto-completion
+            if self.monster_db and self.monster_db.df is not None:
+                self.monster_names = self.monster_db.df['name'].dropna().tolist()
+            if self.spell_db and self.spell_db.df is not None:
+                self.spell_names = self.spell_db.df['name'].dropna().tolist()
+            if self.item_db and self.item_db.df is not None:
+                self.item_names = self.item_db.df['name'].dropna().tolist()
+            
             if self.rag.collection.count() == 0:
-                self.update_status("Indexation PDFs...")
+                self.update_status("Indexation documents...")
                 self.rag.index_documents()
             
-            status_msg = f"{self.model.backend} Pret!" if self.model.is_available() else "Pas de LLM"
-            self.update_status(status_msg)
+            status = f"{self.model.backend}" if self.model and self.model.is_available() else "Pas de LLM"
+            self.update_status(status)
         except Exception as e:
-            self.update_status(f"Erreur: {str(e)}")
-            print(f"Erreur initialisation: {str(e)}")
+            self.update_status(f"Erreur: {str(e)[:25]}")
+            print(f"[INIT] Erreur: {e}")
     
-    # Chat functions
-    def send_msg(self):
+    def update_status(self, msg):
+        self.status.configure(text=msg)
+        self.root.update()
+    
+    # ============== Chat ==============
+    
+    def send_message(self):
         msg = self.chat_input.get().strip()
-        if not msg: 
+        if not msg:
             return
         
         self.chat_box.insert("end", f"\nVous: {msg}\n")
@@ -575,516 +1229,294 @@ class DnDAssistantGUI:
         self.root.update()
         
         try:
-            ctx = self.rag.get_context_for_query(msg) if self.rag else ""
-            resp = self.model.generate_dm_response(msg, ctx) if self.model and self.model.is_available() \
-                   else "LLM non disponible. Verifiez que LM Studio ou Ollama est lance."
+            context = self.rag.get_context_for_query(msg) if self.rag else ""
+            if self.model and self.model.is_available():
+                response = self.model.generate_dm_response(msg, context)
+            else:
+                response = "LLM non disponible."
             
-            self.chat_box.insert("end", f"IA: {resp}\n")
-            self.chat_history.append({'role': 'assistant', 'content': resp})
+            self.chat_box.insert("end", f"\nMaitre du Donjon: {response}\n")
+            self.chat_history.append({'role': 'assistant', 'content': response})
             self.chat_box.see("end")
-            self.update_status("Termine")
+            self.update_status("Pret")
         except Exception as e:
-            self.chat_box.insert("end", f"Erreur: {str(e)}\n")
+            self.chat_box.insert("end", f"\nErreur: {str(e)}\n")
             self.update_status("Erreur")
-            print(f"Erreur chat: {str(e)}")
     
-    def quick_action(self, text):
-        self.chat_input.delete(0, "end")
-        self.chat_input.insert(0, text)
-        self.send_msg()
+    def _send_to_display(self, display, prompt: str):
+        self.update_status("Generation...")
+        self.root.update()
+        
+        try:
+            if self.model and self.model.is_available():
+                response = self.model.generate_dm_response(prompt)
+            else:
+                response = "LLM non disponible."
+            
+            display.delete("1.0", "end")
+            display.insert("end", response)
+            self.update_status("Pret")
+        except Exception as e:
+            display.delete("1.0", "end")
+            display.insert("end", f"Erreur: {str(e)}")
+            self.update_status("Erreur")
     
-    # Monster search
+    # ============== Generateurs ==============
+    
+    def generate_npc(self):
+        npc_t = self.npc_type.get()
+        race = self.npc_race.get()
+        align = self.npc_align.get()
+        with_quest = self.npc_quest.get()
+        
+        prompt = f"Genere un PNJ detaille pour D&D 5e.\nType: {npc_t}\n"
+        prompt += f"Race: {race}\n" if race != "Aleatoire" else ""
+        prompt += f"Alignement: {align}\n" if align != "Aleatoire" else ""
+        prompt += "\nInclus: nom complet, age, apparence physique, personnalite, historique, motivations, et manieres de parler."
+        if with_quest:
+            prompt += "\nAjoute une quete ou mission qu'il pourrait proposer aux aventuriers."
+        
+        self._send_to_display(self.npc_display, prompt)
+    
+    def generate_building(self):
+        btype = self.building_type.get()
+        state = self.building_state.get()
+        mood = self.building_mood.get()
+        secret = self.building_secret.get()
+        
+        prompt = f"Genere une description detaillee d'un batiment pour D&D 5e.\n"
+        prompt += f"Type: {btype}\nEtat: {state}\nAmbiance: {mood}\n"
+        prompt += "\nInclus: nom du lieu, description exterieure, description interieure, occupants ou proprietaires, details interessants."
+        if secret:
+            prompt += "\nAjoute un secret cache ou un passage derobe."
+        
+        self._send_to_display(self.building_display, prompt)
+    
+    def generate_magic_item(self):
+        rarity = self.item_rarity.get()
+        itype = self.item_type.get()
+        
+        prompt = f"Genere un item magique unique pour D&D 5e.\n"
+        prompt += f"Rarete: {rarity}\n" if rarity != "Aleatoire" else ""
+        prompt += f"Type: {itype}\n" if itype != "Aleatoire" else ""
+        prompt += "\nInclus: nom evocateur, rarete, type, description physique, proprietes magiques, conditions d'utilisation, et histoire/origine."
+        
+        self._send_to_display(self.item_display, prompt)
+    
+    def generate_name(self):
+        category = self.name_type.get()
+        result = NameGenerator.generate(category)
+        self.name_result.configure(text=result)
+        self.name_history.insert("end", f"[{category}] {result}\n")
+        self.name_history.see("end")
+    
+    def generate_treasure(self):
+        level = self.treasure_level.get()
+        include_magic = self.treasure_magic.get()
+        
+        treasure = TreasureGenerator.generate(level, include_magic)
+        formatted = TreasureGenerator.format_treasure(treasure)
+        
+        self.treasure_display.delete("1.0", "end")
+        self.treasure_display.insert("end", formatted)
+    
+    # ============== Recherches ==============
+    
     def search_monster(self):
         query = self.monster_search.get().strip()
         if not query:
             return
         
-        self.update_status("Recherche monstre...")
+        self.update_status("Recherche...")
+        self.monster_display.delete("1.0", "end")
         
         try:
-            monster = self.monster_db.search_monster(query)
+            if not self.monster_db:
+                self.monster_display.insert("end", "Base non chargee.")
+                return
             
-            self.monster_display.delete("1.0", "end")
-            
+            monster = self.monster_db.search(query)
             if monster:
-                # Format the display nicely
-                name = monster.get('name', 'Inconnu')
-                self.monster_display.insert("end", f"{'='*60}\n", "title")
-                self.monster_display.insert("end", f"{name.upper()}\n", "title")
-                self.monster_display.insert("end", f"{'='*60}\n\n", "title")
-                
-                # Key stats first
-                if 'size' in monster and monster['size'] != 'nan':
-                    self.monster_display.insert("end", f"Taille: {monster['size']}\n")
-                if 'type' in monster and monster['type'] != 'nan':
-                    self.monster_display.insert("end", f"Type: {monster['type']}\n")
-                if 'alignment' in monster and monster['alignment'] != 'nan':
-                    self.monster_display.insert("end", f"Alignement: {monster['alignment']}\n")
-                
-                self.monster_display.insert("end", "\n")
-                
-                # Combat stats
-                if 'cr' in monster:
-                    self.monster_display.insert("end", f"CR: {monster['cr']}\n")
-                if 'ac' in monster:
-                    self.monster_display.insert("end", f"AC: {monster['ac']}\n")
-                if 'hp' in monster:
-                    self.monster_display.insert("end", f"HP: {monster['hp']}\n")
-                if 'initiative' in monster:
-                    self.monster_display.insert("end", f"Initiative: +{monster['initiative']}\n")
-                if 'speed' in monster and monster['speed'] != 'nan':
-                    self.monster_display.insert("end", f"Vitesse: {monster['speed']}\n")
-                
-                self.monster_display.insert("end", "\n")
-                
-                # Ability scores
-                self.monster_display.insert("end", "CARACTERISTIQUES:\n")
-                if 'str' in monster:
-                    self.monster_display.insert("end", f"  FOR: {monster['str']}\n")
-                if 'dex' in monster:
-                    self.monster_display.insert("end", f"  DEX: {monster['dex']}\n")
-                if 'con' in monster:
-                    self.monster_display.insert("end", f"  CON: {monster['con']}\n")
-                if 'int' in monster:
-                    self.monster_display.insert("end", f"  INT: {monster['int']}\n")
-                if 'wis' in monster:
-                    self.monster_display.insert("end", f"  SAG: {monster['wis']}\n")
-                if 'cha' in monster:
-                    self.monster_display.insert("end", f"  CHA: {monster['cha']}\n")
-                
-                self.monster_display.insert("end", "\n")
-                
-                # Skills and special abilities
-                if 'skills' in monster and monster['skills'] != 'nan':
-                    self.monster_display.insert("end", f"Competences: {monster['skills']}\n")
-                if 'senses' in monster and monster['senses'] != 'nan':
-                    self.monster_display.insert("end", f"Sens: {monster['senses']}\n")
-                if 'languages' in monster and monster['languages'] != 'nan':
-                    self.monster_display.insert("end", f"Langues: {monster['languages']}\n")
-                
-                self.monster_display.insert("end", "\n")
-                
-                # Resistances/Immunities
-                if 'resistances' in monster and monster['resistances'] != 'nan':
-                    self.monster_display.insert("end", f"Resistances: {monster['resistances']}\n")
-                if 'immunities' in monster and monster['immunities'] != 'nan':
-                    self.monster_display.insert("end", f"Immunites: {monster['immunities']}\n")
-                if 'vulnerabilities' in monster and monster['vulnerabilities'] != 'nan':
-                    self.monster_display.insert("end", f"Vulnerabilites: {monster['vulnerabilities']}\n")
-                
-                # Full text if available (contains all abilities and actions)
-                if 'full_text' in monster and monster['full_text'] != 'nan':
-                    self.monster_display.insert("end", f"\n{'='*60}\n")
-                    self.monster_display.insert("end", "DETAILS COMPLETS:\n")
-                    self.monster_display.insert("end", f"{'='*60}\n\n")
-                    self.monster_display.insert("end", str(monster['full_text']))
-                
+                self._display_monster(monster)
             else:
-                self.monster_display.insert("end", "Aucun monstre trouve.\n")
-                self.monster_display.insert("end", "\nEssayez un autre nom ou verifiez l'orthographe.")
+                self.monster_display.insert("end", f"Aucun monstre trouve pour '{query}'.")
             
-            self.update_status("Recherche terminee")
+            self.update_status("Pret")
         except Exception as e:
-            self.monster_display.delete("1.0", "end")
-            self.monster_display.insert("end", f"Erreur: {str(e)}\n")
-            self.update_status("Erreur")
-            print(f"Erreur recherche monstre: {str(e)}")
+            self.monster_display.insert("end", f"Erreur: {str(e)}")
     
-    # Rules search
+    def _display_monster(self, m: dict):
+        name = m.get('name', 'Inconnu')
+        self.monster_display.insert("end", f"{'='*50}\n  {name.upper()}\n{'='*50}\n\n")
+        
+        for key, label in [('size', 'Taille'), ('type', 'Type'), ('alignment', 'Alignement'),
+                           ('cr', 'CR'), ('ac', 'CA'), ('hp', 'PV'), ('speed', 'Vitesse')]:
+            if key in m and str(m[key]) != 'nan':
+                self.monster_display.insert("end", f"{label}: {m[key]}\n")
+        
+        self.monster_display.insert("end", "\n")
+        
+        stats = ['str', 'dex', 'con', 'int', 'wis', 'cha']
+        names = ['FOR', 'DEX', 'CON', 'INT', 'SAG', 'CHA']
+        line = "  ".join(f"{names[i]}: {m.get(s, '-')}" for i, s in enumerate(stats) if s in m)
+        if line:
+            self.monster_display.insert("end", f"{line}\n\n")
+        
+        for key, label in [('skills', 'Competences'), ('senses', 'Sens'), ('languages', 'Langues'),
+                           ('resistances', 'Resistances'), ('immunities', 'Immunites')]:
+            if key in m and str(m[key]) != 'nan':
+                self.monster_display.insert("end", f"{label}: {m[key]}\n")
+        
+        if 'full_text' in m and str(m['full_text']) != 'nan':
+            self.monster_display.insert("end", f"\n{'='*50}\nDETAILS\n{'='*50}\n\n{m['full_text']}")
+    
+    def search_item(self):
+        query = self.item_search.get().strip()
+        if not query:
+            return
+        
+        self.update_status("Recherche...")
+        self.item_display.delete("1.0", "end")
+        
+        try:
+            if self.item_db:
+                item = self.item_db.search(query)
+                if item:
+                    self._display_item(item)
+                    self.update_status("Pret")
+                    return
+            
+            self.item_display.insert("end", f"Item '{query}' non trouve.\nUtilisez 'Generer' pour creer un item magique.")
+            self.update_status("Pret")
+        except Exception as e:
+            self.item_display.insert("end", f"Erreur: {str(e)}")
+    
+    def _display_item(self, item: dict):
+        name = item.get('name', 'Inconnu')
+        self.item_display.insert("end", f"{'='*50}\n  {name.upper()}\n{'='*50}\n\n")
+        
+        for key, label in [('category', 'Categorie'), ('rarity', 'Rarete'), 
+                           ('classification', 'Type'), ('ac', 'CA'), 
+                           ('damage', 'Degats'), ('damage_type', 'Type degats'),
+                           ('properties', 'Proprietes'), ('cost', 'Cout')]:
+            if key in item and str(item[key]) != 'nan' and item[key]:
+                self.item_display.insert("end", f"{label}: {item[key]}\n")
+        
+        if 'description' in item and str(item['description']) != 'nan':
+            self.item_display.insert("end", f"\n{item['description']}")
+    
+    def search_spell(self):
+        query = self.spell_search.get().strip()
+        if not query:
+            return
+        
+        self.update_status("Recherche...")
+        self.spell_display.delete("1.0", "end")
+        
+        try:
+            if self.spell_db:
+                spell = self.spell_db.search(query)
+                if spell:
+                    self._display_spell(spell)
+                    self.update_status("Pret")
+                    return
+            
+            self.spell_display.insert("end", f"Sort '{query}' non trouve.")
+            self.update_status("Pret")
+        except Exception as e:
+            self.spell_display.insert("end", f"Erreur: {str(e)}")
+    
+    def _display_spell(self, spell: dict):
+        name = spell.get('name', 'Inconnu')
+        self.spell_display.insert("end", f"{'='*50}\n  {name.upper()}\n{'='*50}\n\n")
+        
+        for key, label in [('level', 'Niveau'), ('school', 'Ecole'), ('classes', 'Classes'),
+                           ('casting_time', 'Temps incantation'), ('range', 'Portee'), ('duration', 'Duree')]:
+            if key in spell and str(spell[key]) != 'nan':
+                self.spell_display.insert("end", f"{label}: {spell[key]}\n")
+        
+        comps = []
+        if spell.get('component_v'): comps.append('V')
+        if spell.get('component_s'): comps.append('S')
+        if spell.get('component_m'): comps.append('M')
+        if comps:
+            self.spell_display.insert("end", f"Composantes: {', '.join(comps)}\n")
+        if spell.get('materials') and str(spell['materials']) != 'nan':
+            self.spell_display.insert("end", f"Materiaux: {spell['materials']}\n")
+        
+        if spell.get('ritual'):
+            self.spell_display.insert("end", "Rituel: Oui\n")
+        
+        if 'description' in spell and str(spell['description']) != 'nan':
+            desc = str(spell['description']).replace('<br />', '\n').replace('<br/>', '\n')
+            self.spell_display.insert("end", f"\n{desc}")
+        
+        if 'higher_levels' in spell and str(spell['higher_levels']) != 'nan':
+            self.spell_display.insert("end", f"\n\nA plus haut niveau: {spell['higher_levels']}")
+    
     def search_rules(self):
         query = self.rule_search.get().strip()
         if not query:
             return
         
-        self.update_status("Recherche regles...")
+        self.update_status("Recherche...")
+        self.rules_display.delete("1.0", "end")
         
         try:
-            results = self.rag.search_rule(query) if self.rag else "RAG non disponible"
-            
-            self.rules_display.delete("1.0", "end")
-            self.rules_display.insert("end", results)
-            
-            self.update_status("Recherche terminee")
-        except Exception as e:
-            self.rules_display.delete("1.0", "end")
-            self.rules_display.insert("end", f"Erreur: {str(e)}\n")
-            self.update_status("Erreur")
-            print(f"Erreur recherche regles: {str(e)}")
-    
-    # Tool functions
-    def dice_roller(self):
-        self.dice_roller_prompt()
-    
-    def dice_roller_prompt(self):
-        # Create popup dialog
-        dialog = ctk.CTkToplevel(self.root)
-        dialog.title("Lancer des Des")
-        dialog.geometry("400x250")
-        dialog.configure(fg_color=self.colors['bg_dark'])
-        
-        # Center the dialog
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        ctk.CTkLabel(dialog, text="Lancer des Des", 
-                    font=("Courier", 14, "bold"), text_color=self.colors['gold']).pack(pady=20)
-        
-        # Number of dice
-        num_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        num_frame.pack(pady=10)
-        
-        ctk.CTkLabel(num_frame, text="Nombre de des:", 
-                    font=("Courier", 11), text_color=self.colors['text']).pack(side="left", padx=5)
-        
-        num_entry = ctk.CTkEntry(num_frame, width=60, font=("Courier", 12),
-                                fg_color=self.colors['bg_light'], text_color=self.colors['text'])
-        num_entry.pack(side="left", padx=5)
-        num_entry.insert(0, "1")
-        num_entry.focus()
-        
-        # Type of dice
-        type_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        type_frame.pack(pady=10)
-        
-        ctk.CTkLabel(type_frame, text="Type de de:", 
-                    font=("Courier", 11), text_color=self.colors['text']).pack(side="left", padx=5)
-        
-        dice_type = ctk.CTkOptionMenu(type_frame, values=["d4", "d6", "d8", "d10", "d12", "d20", "d100"],
-                                      fg_color=self.colors['orange'], button_color=self.colors['orange'],
-                                      button_hover_color=self.colors['red'], width=100)
-        dice_type.set("d20")
-        dice_type.pack(side="left", padx=5)
-        
-        # Modifier (optional)
-        mod_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        mod_frame.pack(pady=10)
-        
-        ctk.CTkLabel(mod_frame, text="Modificateur (optionnel):", 
-                    font=("Courier", 11), text_color=self.colors['text']).pack(side="left", padx=5)
-        
-        mod_entry = ctk.CTkEntry(mod_frame, width=80, font=("Courier", 12),
-                                fg_color=self.colors['bg_light'], text_color=self.colors['text'],
-                                placeholder_text="+0")
-        mod_entry.pack(side="left", padx=5)
-        
-        def submit():
-            num = num_entry.get().strip()
-            dtype = dice_type.get()
-            mod = mod_entry.get().strip()
-            
-            if num:
-                dice_str = f"{num}{dtype}"
-                if mod and mod not in ["+0", "0", ""]:
-                    dice_str += mod if mod.startswith(('+', '-')) else f"+{mod}"
-                
-                self.quick_action(f"Lance les des suivants: {dice_str}")
-                dialog.destroy()
-        
-        num_entry.bind("<Return>", lambda e: submit())
-        mod_entry.bind("<Return>", lambda e: submit())
-        
-        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        btn_frame.pack(pady=20)
-        
-        self.create_button(btn_frame, "Lancer", submit, 100).pack(side="left", padx=5)
-        self.create_button(btn_frame, "Annuler", dialog.destroy, 100).pack(side="left", padx=5)
-    
-    def encounter_generator(self):
-        self.encounter_generator_prompt()
-    
-    def encounter_generator_prompt(self):
-        """Dialogue pour generer une rencontre personnalisee"""
-        # Create popup dialog
-        dialog = ctk.CTkToplevel(self.root)
-        dialog.title("Generer Rencontre")
-        dialog.geometry("450x400")
-        dialog.configure(fg_color=self.colors['bg_dark'])
-        
-        # Center the dialog
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        ctk.CTkLabel(dialog, text="Generer une Rencontre", 
-                    font=("Courier", 14, "bold"), text_color=self.colors['gold']).pack(pady=15)
-        
-        # Level input
-        level_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        level_frame.pack(pady=8)
-        
-        ctk.CTkLabel(level_frame, text="Niveau du groupe:", 
-                    font=("Courier", 11), text_color=self.colors['text']).pack(side="left", padx=5)
-        
-        level_entry = ctk.CTkEntry(level_frame, width=60, font=("Courier", 12),
-                                   fg_color=self.colors['bg_light'], text_color=self.colors['text'])
-        level_entry.pack(side="left", padx=5)
-        level_entry.insert(0, "5")
-        level_entry.focus()
-        
-        # Difficulty
-        diff_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        diff_frame.pack(pady=8)
-        
-        ctk.CTkLabel(diff_frame, text="Difficulte:", 
-                    font=("Courier", 11), text_color=self.colors['text']).pack(side="left", padx=5)
-        
-        difficulty = ctk.CTkOptionMenu(diff_frame, values=["Facile", "Moyenne", "Difficile", "Mortelle"],
-                                       fg_color=self.colors['orange'], button_color=self.colors['orange'],
-                                       button_hover_color=self.colors['red'], width=120)
-        difficulty.set("Moyenne")
-        difficulty.pack(side="left", padx=5)
-        
-        # Terrain type
-        terrain_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        terrain_frame.pack(pady=8)
-        
-        ctk.CTkLabel(terrain_frame, text="Terrain:", 
-                    font=("Courier", 11), text_color=self.colors['text']).pack(side="left", padx=5)
-        
-        terrain = ctk.CTkOptionMenu(terrain_frame, 
-                                    values=["Foret", "Montagne", "Desert", "Marais", "Plaine", "Underdark", 
-                                           "Urbain", "Cote", "Toundra", "Jungle", "Ruines", "Grotte",
-                                           "Feywild", "Shadowfell", "Abyss", "Nine Hells", "Astral Plane",
-                                           "Ethereal Plane", "Elemental Plane"],
-                                    fg_color=self.colors['orange'], button_color=self.colors['orange'],
-                                    button_hover_color=self.colors['red'], width=130,
-                                    command=lambda choice: self.toggle_elemental_options(choice, elemental_frame))
-        terrain.set("Foret")
-        terrain.pack(side="left", padx=5)
-        
-        # Elemental plane options (hidden by default)
-        elemental_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        
-        ctk.CTkLabel(elemental_frame, text="Element:", 
-                    font=("Courier", 11), text_color=self.colors['text']).pack(side="left", padx=5)
-        
-        elemental = ctk.CTkOptionMenu(elemental_frame, 
-                                      values=["Feu", "Eau", "Terre", "Air"],
-                                      fg_color=self.colors['orange'], button_color=self.colors['orange'],
-                                      button_hover_color=self.colors['red'], width=100)
-        elemental.set("Feu")
-        elemental.pack(side="left", padx=5)
-        
-        # Encounter type
-        type_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        type_frame.pack(pady=8)
-        
-        ctk.CTkLabel(type_frame, text="Type:", 
-                    font=("Courier", 11), text_color=self.colors['text']).pack(side="left", padx=5)
-        
-        enc_type = ctk.CTkOptionMenu(type_frame, 
-                                     values=["Combat", "Piege", "Exploration", "Social", "Mystere", 
-                                            "Poursuite", "Embuscade", "Rencontre Amicale", "Evenement Aleatoire",
-                                            "Decouverte", "Puzzle", "Negociation"],
-                                     fg_color=self.colors['orange'], button_color=self.colors['orange'],
-                                     button_hover_color=self.colors['red'], width=150)
-        enc_type.set("Combat")
-        enc_type.pack(side="left", padx=5)
-        
-        # Moral alignment
-        moral_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        moral_frame.pack(pady=8)
-        
-        ctk.CTkLabel(moral_frame, text="Alignement:", 
-                    font=("Courier", 11), text_color=self.colors['text']).pack(side="left", padx=5)
-        
-        moral = ctk.CTkOptionMenu(moral_frame, 
-                                  values=["Hostile", "Neutre", "Amical", "Mixte"],
-                                  fg_color=self.colors['orange'], button_color=self.colors['orange'],
-                                  button_hover_color=self.colors['red'], width=120)
-        moral.set("Hostile")
-        moral.pack(side="left", padx=5)
-        
-        def submit():
-            level = level_entry.get().strip()
-            diff = difficulty.get()
-            terr = terrain.get()
-            etype = enc_type.get()
-            mor = moral.get()
-            
-            if level:
-                # Construire un prompt detaille
-                prompt = f"Genere une rencontre {diff} de type '{etype}' pour un groupe de niveau {level}. "
-                
-                # Ajouter element si plan elementaire
-                if terr == "Elemental Plane":
-                    elem = elemental.get()
-                    prompt += f"Terrain: Plan Elementaire de {elem}. "
-                else:
-                    prompt += f"Terrain: {terr}. "
-                
-                prompt += f"Alignement: {mor}. "
-                prompt += "Inclus: description, creatures/PNJ impliques, tactiques, recompenses potentielles et consequences."
-                
-                result = self.model.generate_encounter(prompt, level, diff)
-                dialog.destroy()
-        
-        level_entry.bind("<Return>", lambda e: submit())
-        
-        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        btn_frame.pack(pady=15)
-        
-        self.create_button(btn_frame, "Generer", submit, 100).pack(side="left", padx=5)
-        self.create_button(btn_frame, "Annuler", dialog.destroy, 100).pack(side="left", padx=5)
-    
-    def toggle_elemental_options(self, choice, elemental_frame):
-        """Affiche les options elementaires si plan elementaire selectionne"""
-        if choice == "Elemental Plane":
-            elemental_frame.pack(pady=8)
-        else:
-            elemental_frame.pack_forget()
-    
-    def npc_generator(self):
-        """Generateur de PNJ avec dialogue de personnalisation"""
-        self.npc_generator_prompt()
-    
-    def npc_generator_prompt(self):
-        """Dialogue pour creer un PNJ personnalise"""
-        # Creer fenetre popup
-        dialog = ctk.CTkToplevel(self.root)
-        dialog.title("Generer PNJ")
-        dialog.geometry("400x300")
-        dialog.configure(fg_color=self.colors['bg_dark'])
-        
-        # Centrer le dialogue
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        ctk.CTkLabel(dialog, text="Generer un PNJ", 
-                    font=("Courier", 14, "bold"), text_color=self.colors['gold']).pack(pady=20)
-        
-        # Type de PNJ
-        type_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        type_frame.pack(pady=10)
-        
-        ctk.CTkLabel(type_frame, text="Type de PNJ:", 
-                    font=("Courier", 11), text_color=self.colors['text']).pack(side="left", padx=5)
-        
-        npc_type = ctk.CTkOptionMenu(type_frame, 
-                                     values=["Mysterieux", "Marchand", "Noble", "Guerrier", "Mage", "Voleur", "Pretre", "Aubergiste",
-                                            "Forgeron", "Alchimiste", "Barde", "Ermite", "Garde", "Assassin", "Druide", "Pirate",
-                                            "Mendiant", "Sage", "Artisan", "Espion", "Cultiste", "Paladin", "Necromancien", "Chasseur"],
-                                     fg_color=self.colors['orange'], button_color=self.colors['orange'],
-                                     button_hover_color=self.colors['red'], width=150)
-        npc_type.set("Mysterieux")
-        npc_type.pack(side="left", padx=5)
-        
-        # Alignement
-        align_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        align_frame.pack(pady=10)
-        
-        ctk.CTkLabel(align_frame, text="Alignement:", 
-                    font=("Courier", 11), text_color=self.colors['text']).pack(side="left", padx=5)
-        
-        alignment = ctk.CTkOptionMenu(align_frame, 
-                                      values=["Bon", "Neutre", "Mauvais", "Aleatoire"],
-                                      fg_color=self.colors['orange'], button_color=self.colors['orange'],
-                                      button_hover_color=self.colors['red'], width=120)
-        alignment.set("Aleatoire")
-        alignment.pack(side="left", padx=5)
-        
-        # Avec quete?
-        quest_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        quest_frame.pack(pady=10)
-        
-        quest_var = ctk.BooleanVar(value=True)
-        quest_check = ctk.CTkCheckBox(quest_frame, text="Inclure une quete",
-                                      variable=quest_var, fg_color=self.colors['orange'],
-                                      hover_color=self.colors['red'], text_color=self.colors['text'])
-        quest_check.pack()
-        
-        def submit():
-            """Envoyer la requete au chat"""
-            npc_t = npc_type.get()
-            align = alignment.get()
-            has_quest = quest_var.get()
-            
-            # Construire le prompt
-            prompt = f"Cree un PNJ {npc_t} avec alignement {align}"
-            if has_quest:
-                prompt += " et donne-lui une quete interessante a proposer aux joueurs"
-            prompt += ". Inclus: nom, race, classe, personnalite, background et motivation."
-            
-            result = self.model.generate_npc(prompt)
-            dialog.destroy()
-        
-        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        btn_frame.pack(pady=20)
-        
-        self.create_button(btn_frame, "Generer", submit, 100).pack(side="left", padx=5)
-        self.create_button(btn_frame, "Annuler", dialog.destroy, 100).pack(side="left", padx=5)
-    
-    def dungeon_generator_tool(self):
-        self.tabs.set("Donjon")
-    
-    def xp_calculator(self):
-        self.quick_action("Calcule l'XP pour vaincre 3 gobelins et 1 hobgobelin")
-    
-    def initiative_tracker_tool(self):
-        self.tabs.set("Initiative")
-    
-    # Initiative functions
-    def add_init(self):
-        try:
-            init_value = int(self.i_init.get())
-            if self.init_tracker.add(self.i_name.get(), init_value):
-                self.i_name.delete(0, "end")
-                self.i_init.delete(0, "end")
-                self.update_init()
+            if self.rag:
+                result = self.rag.search_rule(query)
+                self.rules_display.insert("end", result)
             else:
-                messagebox.showerror("Erreur", "L'initiative doit etre entre 0 et 40")
+                self.rules_display.insert("end", "Systeme RAG non charge.")
+            
+            self.update_status("Pret")
         except Exception as e:
-            messagebox.showerror("Erreur", f"Entree invalide: {str(e)}")
+            self.rules_display.insert("end", f"Erreur: {str(e)}")
     
-    def roll_init(self):
+    # ============== Initiative ==============
+    
+    def add_to_initiative(self):
+        name = self.init_name.get().strip()
+        try:
+            init = int(self.init_value.get().strip())
+        except ValueError:
+            messagebox.showerror("Erreur", "Initiative invalide")
+            return
+        
+        if self.init_tracker.add(name, init):
+            self.init_name.delete(0, "end")
+            self.init_value.delete(0, "end")
+            self.update_initiative_display()
+        else:
+            messagebox.showerror("Erreur", "Nom vide ou initiative hors limites")
+    
+    def next_initiative(self):
+        self.init_tracker.next_turn()
+        self.update_initiative_display()
+    
+    def clear_initiative(self):
+        self.init_tracker.clear()
+        self.update_initiative_display()
+    
+    def roll_all_initiative(self):
         for c in self.init_tracker.creatures:
             c['initiative'] = random.randint(1, 20)
         self.init_tracker.creatures.sort(key=lambda x: x['initiative'], reverse=True)
-        self.update_init()
+        self.update_initiative_display()
     
-    def next_turn(self):
-        self.init_tracker.next_turn()
-        self.update_init()
-    
-    def clear_init(self):
-        self.init_tracker.clear()
-        self.update_init()
-    
-    def update_init(self):
-        self.init_box.delete("1.0", "end")
-        self.init_box.insert("end", f"ROUND {self.init_tracker.round_number}\n{'='*50}\n\n")
-        curr = self.init_tracker.get_current()
+    def update_initiative_display(self):
+        self.init_display.delete("1.0", "end")
+        self.init_display.insert("end", f"ROUND {self.init_tracker.round_number}\n{'-'*28}\n\n")
+        
+        current = self.init_tracker.get_current()
         for c in self.init_tracker.creatures:
-            marker = ">>> " if c == curr else "    "
-            self.init_box.insert("end", f"{marker}{c['name']:30} Initiative: {c['initiative']:2}\n")
-    
-    # Dungeon functions
-    def gen_dungeon(self):
-        try:
-            rooms = int(self.d_rooms.get())
-            difficulty = self.d_diff.get()
-            theme = self.d_theme.get()
-            
-            # Create AI prompt
-            prompt = f"Genere un donjon de {rooms} salles avec difficulte {difficulty} et theme {theme}. Pour chaque salle, donne: numero, type (entrance/chamber/corridor/treasure/boss/trap), description detaillee, monstres presents, et tresors eventuels."
-            
-            # Switch to chat tab and send the prompt
-            self.tabs.set("Chat")
-            self.chat_input.delete(0, "end")
-            self.chat_input.insert(0, prompt)
-            self.send_msg()
-            
-        except Exception as e:
-            messagebox.showerror("Erreur", str(e))
-    
-    # Session functions removed
-    def save_sess(self):
-        pass
-    
-    def load_sess(self):
-        pass
-    
-    def refresh_sess(self):
-        pass
+            marker = "> " if c == current else "  "
+            name = c['name'][:18].ljust(18)
+            init = str(c['initiative']).rjust(2)
+            self.init_display.insert("end", f"{marker}{name} [{init}]\n")
+        
+        if not self.init_tracker.creatures:
+            self.init_display.insert("end", "Aucune creature\n")
     
     def run(self):
         self.root.mainloop()
@@ -1093,6 +1525,7 @@ class DnDAssistantGUI:
 def main():
     app = DnDAssistantGUI()
     app.run()
+
 
 if __name__ == "__main__":
     main()
